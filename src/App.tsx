@@ -20,7 +20,7 @@ function App() {
     <div
       style={{
         backgroundColor: "#8B5CF6",
-        minHeight: "100vh",
+        minHeight: "100vh", 
         width: "100vw",
         position: "fixed",
         top: 0,
