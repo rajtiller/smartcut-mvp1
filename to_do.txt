@@ -1,1 +1,4 @@
 To Do:
+vreak everything into new files
+make new page when green button hit
+make the just title and length be shorter in height

@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import "./App.css";
 
 interface FileInfo {
@@ -7,9 +7,14 @@ interface FileInfo {
   thumbnail: string;
 }
 
+type DisplayType = "title" | "title-duration" | "title-duration-thumbnail";
+
 function App() {
   const [selectedFiles, setSelectedFiles] = useState<FileInfo[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [displayType, setDisplayType] = useState<DisplayType>(
+    "title-duration-thumbnail"
+  );
 
   const getVideoDuration = (file: File): Promise<number> => {
     return new Promise((resolve) => {
@@ -54,22 +59,41 @@ function App() {
       return;
     }
 
+    // Check for duplicate files
+    const newFiles = mp4Files.filter(
+      (newFile) =>
+        !selectedFiles.some(
+          (existingFile) =>
+            existingFile.file.name === newFile.name &&
+            existingFile.file.size === newFile.size
+        )
+    );
+
+    if (newFiles.length === 0) {
+      alert("All selected files are already in the list");
+      return;
+    }
+
     setIsProcessing(true);
 
     try {
-      const fileInfoPromises = mp4Files.map(async (file) => {
+      const fileInfoPromises = newFiles.map(async (file) => {
         const duration = await getVideoDuration(file);
         const thumbnail = await generateThumbnail(file);
         return { file, duration, thumbnail };
       });
 
       const fileInfos = await Promise.all(fileInfoPromises);
-      setSelectedFiles(fileInfos);
+      // Add to existing files instead of replacing
+      setSelectedFiles((prev) => [...prev, ...fileInfos]);
     } catch (error) {
       console.error("Error processing files:", error);
     } finally {
       setIsProcessing(false);
     }
+
+    // Clear the input so the same file can be selected again if needed
+    event.target.value = "";
   };
 
   const triggerFileSelect = () => {
@@ -96,6 +120,82 @@ function App() {
     // Add your trim logic here
   };
 
+  const removeFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const renderFileItem = (fileInfo: FileInfo, index: number) => {
+    const baseStyle = {
+      backgroundColor: "rgba(255, 255, 255, 0.1)",
+      borderRadius: "8px",
+      padding: "1rem",
+      display: "flex",
+      alignItems: "center",
+      gap: "1rem",
+      backdropFilter: "blur(10px)",
+      position: "relative" as const,
+    };
+
+    return (
+      <div key={index} style={baseStyle}>
+        {displayType === "title-duration-thumbnail" && (
+          <img
+            src={fileInfo.thumbnail}
+            alt="Video thumbnail"
+            style={{
+              width: "80px",
+              height: "45px",
+              borderRadius: "4px",
+              objectFit: "cover",
+            }}
+          />
+        )}
+
+        <div style={{ flex: 1 }}>
+          <h3
+            style={{
+              margin: "0 0 0.5rem 0",
+              fontSize: "1rem",
+              fontWeight: "600",
+            }}
+          >
+            {fileInfo.file.name}
+          </h3>
+
+          {(displayType === "title-duration" ||
+            displayType === "title-duration-thumbnail") && (
+            <div
+              style={{
+                fontSize: "0.9rem",
+                opacity: 0.8,
+                display: "flex",
+                gap: "1rem",
+              }}
+            >
+              <span>Size: {formatFileSize(fileInfo.file.size)}</span>
+              <span>Duration: {formatDuration(fileInfo.duration)}</span>
+            </div>
+          )}
+        </div>
+
+        <button
+          onClick={() => removeFile(index)}
+          style={{
+            backgroundColor: "#ef4444",
+            color: "white",
+            border: "none",
+            borderRadius: "4px",
+            padding: "0.5rem",
+            cursor: "pointer",
+            fontSize: "0.8rem",
+          }}
+        >
+          Remove
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div
       style={{
@@ -120,8 +220,8 @@ function App() {
         style={{
           fontSize: "3rem",
           fontWeight: "bold",
-          marginBottom: "4rem",
-          marginTop: "2rem",
+          marginBottom: "2rem",
+          marginTop: "1rem",
         }}
       >
         Smart Cut
@@ -132,11 +232,10 @@ function App() {
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          justifyContent: "center",
-          flex: 1,
           gap: "2rem",
           width: "100%",
           maxWidth: "800px",
+          flex: 1,
         }}
       >
         <button
@@ -167,7 +266,11 @@ function App() {
             }
           }}
         >
-          {isProcessing ? "Processing..." : "Click here to add files"}
+          {isProcessing
+            ? "Processing..."
+            : selectedFiles.length > 0
+            ? "Add more files"
+            : "Click here to add files"}
         </button>
 
         <input
@@ -185,8 +288,10 @@ function App() {
               width: "100%",
               display: "flex",
               flexDirection: "column",
-              gap: "2rem",
+              gap: "1rem",
               alignItems: "center",
+              flex: 1,
+              minHeight: 0, // Important for flex child to be scrollable
             }}
           >
             <button
@@ -203,64 +308,90 @@ function App() {
                 boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
               }}
             >
-              Trim these clip(s)
+              Trim these {selectedFiles.length} clip(s)
             </button>
 
+            {/* Display Options */}
+            <div
+              style={{
+                display: "flex",
+                gap: "0.5rem",
+                marginBottom: "1rem",
+                flexWrap: "wrap",
+                justifyContent: "center",
+              }}
+            >
+              <button
+                onClick={() => setDisplayType("title")}
+                style={{
+                  backgroundColor:
+                    displayType === "title"
+                      ? "white"
+                      : "rgba(255, 255, 255, 0.2)",
+                  color: displayType === "title" ? "#8B5CF6" : "white",
+                  border: "none",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "0.9rem",
+                }}
+              >
+                Title Only
+              </button>
+              <button
+                onClick={() => setDisplayType("title-duration")}
+                style={{
+                  backgroundColor:
+                    displayType === "title-duration"
+                      ? "white"
+                      : "rgba(255, 255, 255, 0.2)",
+                  color: displayType === "title-duration" ? "#8B5CF6" : "white",
+                  border: "none",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "0.9rem",
+                }}
+              >
+                Title + Duration
+              </button>
+              <button
+                onClick={() => setDisplayType("title-duration-thumbnail")}
+                style={{
+                  backgroundColor:
+                    displayType === "title-duration-thumbnail"
+                      ? "white"
+                      : "rgba(255, 255, 255, 0.2)",
+                  color:
+                    displayType === "title-duration-thumbnail"
+                      ? "#8B5CF6"
+                      : "white",
+                  border: "none",
+                  padding: "0.5rem 1rem",
+                  borderRadius: "4px",
+                  cursor: "pointer",
+                  fontSize: "0.9rem",
+                }}
+              >
+                Full Details
+              </button>
+            </div>
+
+            {/* Scrollable File List */}
             <div
               style={{
                 display: "flex",
                 flexDirection: "column",
                 gap: "1rem",
                 width: "100%",
+                maxHeight: "400px", // Limit height to make it scrollable
+                overflowY: "auto",
+                paddingRight: "0.5rem", // Space for scrollbar
               }}
             >
-              {selectedFiles.map((fileInfo, index) => (
-                <div
-                  key={index}
-                  style={{
-                    backgroundColor: "rgba(255, 255, 255, 0.1)",
-                    borderRadius: "8px",
-                    padding: "1rem",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "1rem",
-                    backdropFilter: "blur(10px)",
-                  }}
-                >
-                  <img
-                    src={fileInfo.thumbnail}
-                    alt="Video thumbnail"
-                    style={{
-                      width: "80px",
-                      height: "45px",
-                      borderRadius: "4px",
-                      objectFit: "cover",
-                    }}
-                  />
-                  <div style={{ flex: 1 }}>
-                    <h3
-                      style={{
-                        margin: "0 0 0.5rem 0",
-                        fontSize: "1rem",
-                        fontWeight: "600",
-                      }}
-                    >
-                      {fileInfo.file.name}
-                    </h3>
-                    <div
-                      style={{
-                        fontSize: "0.9rem",
-                        opacity: 0.8,
-                        display: "flex",
-                        gap: "1rem",
-                      }}
-                    >
-                      <span>Size: {formatFileSize(fileInfo.file.size)}</span>
-                      <span>Duration: {formatDuration(fileInfo.duration)}</span>
-                    </div>
-                  </div>
-                </div>
-              ))}
+              {selectedFiles.map((fileInfo, index) =>
+                renderFileItem(fileInfo, index)
+              )}
             </div>
           </div>
         )}
