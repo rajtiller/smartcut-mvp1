@@ -15,10 +15,22 @@ export const FileItem: React.FC<FileItemProps> = ({
   displayType,
   onRemove,
 }) => {
+  // Adjust padding and spacing based on display type for shorter height
+  const getPadding = () => {
+    switch (displayType) {
+      case "title":
+        return "0.5rem 1rem";
+      case "title-duration":
+        return "0.75rem 1rem";
+      default:
+        return "1rem";
+    }
+  };
+
   const baseStyle = {
     backgroundColor: "rgba(255, 255, 255, 0.1)",
     borderRadius: "8px",
-    padding: displayType === "title" ? "0.5rem 1rem" : "1rem",
+    padding: getPadding(),
     display: "flex",
     alignItems: "center",
     gap: "1rem",
@@ -44,9 +56,10 @@ export const FileItem: React.FC<FileItemProps> = ({
       <div style={{ flex: 1 }}>
         <h3
           style={{
-            margin: "0 0 0.5rem 0",
+            margin: displayType === "title" ? "0" : "0 0 0.25rem 0", // Reduced bottom margin for shorter height
             fontSize: "1rem",
             fontWeight: "600",
+            lineHeight: "1.2", // Tighter line height
           }}
         >
           {fileInfo.file.name}
@@ -56,10 +69,11 @@ export const FileItem: React.FC<FileItemProps> = ({
           displayType === "title-duration-thumbnail") && (
           <div
             style={{
-              fontSize: "0.9rem",
+              fontSize: "0.85rem", // Slightly smaller font
               opacity: 0.8,
               display: "flex",
               gap: "1rem",
+              lineHeight: "1.1", // Tighter line height for compact display
             }}
           >
             <span>Size: {formatFileSize(fileInfo.file.size)}</span>
@@ -75,12 +89,14 @@ export const FileItem: React.FC<FileItemProps> = ({
           color: "white",
           border: "none",
           borderRadius: "4px",
-          padding: "0.5rem",
+          padding: displayType === "title" ? "0.4rem 0.6rem" : "0.5rem", // Smaller padding for title-only
           cursor: "pointer",
           fontSize: "0.8rem",
+          minWidth: "auto",
         }}
       >
-        Remove
+        {displayType === "title" ? "×" : "Remove"}{" "}
+        {/* Use × symbol for compact display */}
       </button>
     </div>
   );
