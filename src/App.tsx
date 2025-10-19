@@ -1,13 +1,10 @@
 import { useState } from "react";
 import "./App.css";
-
-interface FileInfo {
-  file: File;
-  duration: number;
-  thumbnail: string;
-}
-
-type DisplayType = "title" | "title-duration" | "title-duration-thumbnail";
+import type { FileInfo, DisplayType } from "./types";
+import { getVideoDuration, generateThumbnail } from "./utils/videoUtils";
+import { DisplayTypeSelector } from "./components/DisplayTypeSelector";
+import { FileList } from "./components/FileList";
+import { TrimPage } from "./pages/TrimPage";
 
 function App() {
   const [selectedFiles, setSelectedFiles] = useState<FileInfo[]>([]);
@@ -15,38 +12,7 @@ function App() {
   const [displayType, setDisplayType] = useState<DisplayType>(
     "title-duration-thumbnail"
   );
-
-  const getVideoDuration = (file: File): Promise<number> => {
-    return new Promise((resolve) => {
-      const video = document.createElement("video");
-      video.preload = "metadata";
-      video.onloadedmetadata = () => {
-        resolve(video.duration);
-      };
-      video.src = URL.createObjectURL(file);
-    });
-  };
-
-  const generateThumbnail = (file: File): Promise<string> => {
-    return new Promise((resolve) => {
-      const video = document.createElement("video");
-      const canvas = document.createElement("canvas");
-      const ctx = canvas.getContext("2d");
-
-      video.onloadeddata = () => {
-        canvas.width = 160;
-        canvas.height = 90;
-        video.currentTime = 1; // Seek to 1 second for thumbnail
-      };
-
-      video.onseeked = () => {
-        ctx?.drawImage(video, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL());
-      };
-
-      video.src = URL.createObjectURL(file);
-    });
-  };
+  const [currentPage, setCurrentPage] = useState<"home" | "trim">("home");
 
   const handleFileSelect = async (
     event: React.ChangeEvent<HTMLInputElement>
@@ -59,7 +25,6 @@ function App() {
       return;
     }
 
-    // Check for duplicate files
     const newFiles = mp4Files.filter(
       (newFile) =>
         !selectedFiles.some(
@@ -84,7 +49,6 @@ function App() {
       });
 
       const fileInfos = await Promise.all(fileInfoPromises);
-      // Add to existing files instead of replacing
       setSelectedFiles((prev) => [...prev, ...fileInfos]);
     } catch (error) {
       console.error("Error processing files:", error);
@@ -92,7 +56,6 @@ function App() {
       setIsProcessing(false);
     }
 
-    // Clear the input so the same file can be selected again if needed
     event.target.value = "";
   };
 
@@ -101,100 +64,21 @@ function App() {
     fileInput?.click();
   };
 
-  const formatFileSize = (bytes: number): string => {
-    if (bytes === 0) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  const formatDuration = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
-
   const handleTrimClick = () => {
-    console.log("Trimming files:", selectedFiles);
-    // Add your trim logic here
+    setCurrentPage("trim");
   };
 
   const removeFile = (index: number) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const renderFileItem = (fileInfo: FileInfo, index: number) => {
-    const baseStyle = {
-      backgroundColor: "rgba(255, 255, 255, 0.1)",
-      borderRadius: "8px",
-      padding: "1rem",
-      display: "flex",
-      alignItems: "center",
-      gap: "1rem",
-      backdropFilter: "blur(10px)",
-      position: "relative" as const,
-    };
-
-    return (
-      <div key={index} style={baseStyle}>
-        {displayType === "title-duration-thumbnail" && (
-          <img
-            src={fileInfo.thumbnail}
-            alt="Video thumbnail"
-            style={{
-              width: "80px",
-              height: "45px",
-              borderRadius: "4px",
-              objectFit: "cover",
-            }}
-          />
-        )}
-
-        <div style={{ flex: 1 }}>
-          <h3
-            style={{
-              margin: "0 0 0.5rem 0",
-              fontSize: "1rem",
-              fontWeight: "600",
-            }}
-          >
-            {fileInfo.file.name}
-          </h3>
-
-          {(displayType === "title-duration" ||
-            displayType === "title-duration-thumbnail") && (
-            <div
-              style={{
-                fontSize: "0.9rem",
-                opacity: 0.8,
-                display: "flex",
-                gap: "1rem",
-              }}
-            >
-              <span>Size: {formatFileSize(fileInfo.file.size)}</span>
-              <span>Duration: {formatDuration(fileInfo.duration)}</span>
-            </div>
-          )}
-        </div>
-
-        <button
-          onClick={() => removeFile(index)}
-          style={{
-            backgroundColor: "#ef4444",
-            color: "white",
-            border: "none",
-            borderRadius: "4px",
-            padding: "0.5rem",
-            cursor: "pointer",
-            fontSize: "0.8rem",
-          }}
-        >
-          Remove
-        </button>
-      </div>
-    );
+  const handleBackToHome = () => {
+    setCurrentPage("home");
   };
+
+  if (currentPage === "trim") {
+    return <TrimPage files={selectedFiles} onBack={handleBackToHome} />;
+  }
 
   return (
     <div
@@ -291,7 +175,7 @@ function App() {
               gap: "1rem",
               alignItems: "center",
               flex: 1,
-              minHeight: 0, // Important for flex child to be scrollable
+              minHeight: 0,
             }}
           >
             <button
@@ -311,88 +195,16 @@ function App() {
               Trim these {selectedFiles.length} clip(s)
             </button>
 
-            {/* Display Options */}
-            <div
-              style={{
-                display: "flex",
-                gap: "0.5rem",
-                marginBottom: "1rem",
-                flexWrap: "wrap",
-                justifyContent: "center",
-              }}
-            >
-              <button
-                onClick={() => setDisplayType("title")}
-                style={{
-                  backgroundColor:
-                    displayType === "title"
-                      ? "white"
-                      : "rgba(255, 255, 255, 0.2)",
-                  color: displayType === "title" ? "#8B5CF6" : "white",
-                  border: "none",
-                  padding: "0.5rem 1rem",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontSize: "0.9rem",
-                }}
-              >
-                Title Only
-              </button>
-              <button
-                onClick={() => setDisplayType("title-duration")}
-                style={{
-                  backgroundColor:
-                    displayType === "title-duration"
-                      ? "white"
-                      : "rgba(255, 255, 255, 0.2)",
-                  color: displayType === "title-duration" ? "#8B5CF6" : "white",
-                  border: "none",
-                  padding: "0.5rem 1rem",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontSize: "0.9rem",
-                }}
-              >
-                Title + Duration
-              </button>
-              <button
-                onClick={() => setDisplayType("title-duration-thumbnail")}
-                style={{
-                  backgroundColor:
-                    displayType === "title-duration-thumbnail"
-                      ? "white"
-                      : "rgba(255, 255, 255, 0.2)",
-                  color:
-                    displayType === "title-duration-thumbnail"
-                      ? "#8B5CF6"
-                      : "white",
-                  border: "none",
-                  padding: "0.5rem 1rem",
-                  borderRadius: "4px",
-                  cursor: "pointer",
-                  fontSize: "0.9rem",
-                }}
-              >
-                Full Details
-              </button>
-            </div>
+            <DisplayTypeSelector
+              displayType={displayType}
+              onDisplayTypeChange={setDisplayType}
+            />
 
-            {/* Scrollable File List */}
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: "1rem",
-                width: "100%",
-                maxHeight: "400px", // Limit height to make it scrollable
-                overflowY: "auto",
-                paddingRight: "0.5rem", // Space for scrollbar
-              }}
-            >
-              {selectedFiles.map((fileInfo, index) =>
-                renderFileItem(fileInfo, index)
-              )}
-            </div>
+            <FileList
+              files={selectedFiles}
+              displayType={displayType}
+              onRemoveFile={removeFile}
+            />
           </div>
         )}
       </div>
