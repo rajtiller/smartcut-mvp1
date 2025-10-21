@@ -1,5 +1,10 @@
 import { useState } from "react";
 import "./App.css";
+import type { FileInfo, DisplayType } from "./types";
+import { getVideoDuration, generateThumbnail } from "./utils/videoUtils";
+import { DisplayTypeSelector } from "./components/DisplayTypeSelector";
+import { FileList } from "./components/FileList";
+import { TrimPage } from "./pages/TrimPage";
 
 interface TranscriptionSegment {
   id: number;
@@ -47,7 +52,6 @@ function App() {
     const fileInput = document.getElementById("fileInput") as HTMLInputElement;
     fileInput?.click();
   };
-
   const handleTranscribe = async () => {
     if (!selectedFile) return;
     
@@ -172,6 +176,7 @@ function App() {
         color: "white",
         margin: 0,
         boxSizing: "border-box",
+        overflow: "auto",
       }}
     >
       <h1
@@ -218,11 +223,10 @@ function App() {
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          justifyContent: "center",
-          flex: 1,
-          gap: "1rem",
-          maxWidth: "800px",
+          gap: "2rem",
           width: "100%",
+          maxWidth: "800px",
+          flex: 1,
         }}
       >
         {/* Step 1: File Upload */}
