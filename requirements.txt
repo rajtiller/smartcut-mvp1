@@ -1,0 +1,29 @@
+# Smart Cut MVP1 - Python Dependencies
+
+# Web Framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.20.0
+python-multipart>=0.0.5
+
+# OpenAI API
+openai>=1.0.0
+
+# Audio/Video Processing
+moviepy>=1.0.0
+librosa>=0.9.0
+soundfile>=0.10.0
+numpy>=1.21.0
+
+# File handling
+aiofiles>=23.0.0
+
+# HTTP requests
+httpx>=0.24.0
+requests>=2.28.0
+
+# Environment variables
+python-dotenv>=0.19.0
+
+# Development tools
+pytest>=7.0.0
+pytest-asyncio>=0.20.0
