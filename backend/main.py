@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import openai
-import ffmpeg
+from moviepy.editor import VideoFileClip, AudioFileClip
 import librosa
 import numpy as np
 from dotenv import load_dotenv
@@ -71,16 +71,14 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
     
-    # Check file type - allow formats supported by OpenAI Whisper plus formats we can convert
-    whisper_supported = {'.flac', '.m4a', '.mp3', '.mp4', '.mpeg', '.mpga', '.oga', '.ogg', '.wav', '.webm'}
-    convertible_formats = {'.avi', '.mov'}  # Formats we can convert to supported formats
-    all_supported = whisper_supported.union(convertible_formats)
+    # Check file type
+    allowed_extensions = {'.mp3', '.mp4', '.wav', '.m4a', '.webm', '.ogg', '.flac', '.avi', '.mov'}
     file_ext = os.path.splitext(file.filename)[1].lower()
     
-    if file_ext not in all_supported:
+    if file_ext not in allowed_extensions:
         raise HTTPException(
             status_code=400, 
-            detail=f"Unsupported file type: {file_ext}. Supported formats: {', '.join(sorted(all_supported))}"
+            detail=f"Unsupported file type: {file_ext}. Allowed: {', '.join(allowed_extensions)}"
         )
     
     try:
@@ -89,106 +87,36 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # Convert file to a format supported by Whisper if needed
-        whisper_file_path = file_path
-        temp_file_created = False
-        
-        # Check if we need to convert the file
-        if file_ext in ['.avi', '.mov']:
-            # Convert video to mp4 for Whisper using ffmpeg
-            converted_path = f"uploads/converted_{os.path.splitext(file.filename)[0]}.mp4"
-            try:
-                (
-                    ffmpeg
-                    .input(file_path)
-                    .output(converted_path, vcodec='libx264', acodec='aac')
-                    .overwrite_output()
-                    .run(quiet=True)
-                )
-                whisper_file_path = converted_path
-                temp_file_created = True
-            except ffmpeg.Error as e:
-                raise HTTPException(status_code=500, detail=f"Video conversion failed: {e}")
-        
         # Transcribe using OpenAI Whisper
-        with open(whisper_file_path, "rb") as audio_file:
+        with open(file_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1",
                 file=audio_file,
                 response_format="verbose_json"
             )
         
-        # Debug: Print transcript structure
-        print(f"=== TRANSCRIPT DEBUG INFO ===")
-        print(f"Transcript type: {type(transcript)}")
-        print(f"Transcript attributes: {dir(transcript)}")
-        print(f"Transcript text: {getattr(transcript, 'text', 'NO TEXT')}")
-        print(f"Transcript language: {getattr(transcript, 'language', 'NO LANGUAGE')}")
-        
-        if hasattr(transcript, 'segments'):
-            print(f"Segments type: {type(transcript.segments)}")
-            print(f"Number of segments: {len(transcript.segments) if transcript.segments else 0}")
-            if transcript.segments and len(transcript.segments) > 0:
-                print(f"First segment type: {type(transcript.segments[0])}")
-                print(f"First segment: {transcript.segments[0]}")
-                if hasattr(transcript.segments[0], '__dict__'):
-                    print(f"First segment attributes: {transcript.segments[0].__dict__}")
-                elif isinstance(transcript.segments[0], dict):
-                    print(f"First segment keys: {list(transcript.segments[0].keys())}")
-                    print(f"First segment values: {transcript.segments[0]}")
-        else:
-            print("No segments attribute found")
-        print(f"=== END DEBUG INFO ===")
-        
         # Convert to our model format
-        segments = []
-        if hasattr(transcript, 'segments') and transcript.segments:
-            for seg in transcript.segments:
-                # Handle both dictionary and object formats
-                if isinstance(seg, dict):
-                    # Dictionary format
-                    segments.append(TranscriptionSegment(
-                        id=seg.get("id", 0),
-                        seek=seg.get("seek", 0.0),
-                        start=seg.get("start", 0.0),
-                        end=seg.get("end", 0.0),
-                        text=seg.get("text", ""),
-                        tokens=seg.get("tokens", []),
-                        temperature=seg.get("temperature", 0.0),
-                        avg_logprob=seg.get("avg_logprob", 0.0),
-                        compression_ratio=seg.get("compression_ratio", 0.0),
-                        no_speech_prob=seg.get("no_speech_prob", 0.0)
-                    ))
-                else:
-                    # Object format - use getattr
-                    segments.append(TranscriptionSegment(
-                        id=getattr(seg, "id", 0),
-                        seek=getattr(seg, "seek", 0.0),
-                        start=getattr(seg, "start", 0.0),
-                        end=getattr(seg, "end", 0.0),
-                        text=getattr(seg, "text", ""),
-                        tokens=getattr(seg, "tokens", []),
-                        temperature=getattr(seg, "temperature", 0.0),
-                        avg_logprob=getattr(seg, "avg_logprob", 0.0),
-                        compression_ratio=getattr(seg, "compression_ratio", 0.0),
-                        no_speech_prob=getattr(seg, "no_speech_prob", 0.0)
-                    ))
+        segments = [
+            TranscriptionSegment(
+                id=seg["id"],
+                seek=seg["seek"],
+                start=seg["start"],
+                end=seg["end"],
+                text=seg["text"],
+                tokens=seg["tokens"],
+                temperature=seg["temperature"],
+                avg_logprob=seg["avg_logprob"],
+                compression_ratio=seg["compression_ratio"],
+                no_speech_prob=seg["no_speech_prob"]
+            )
+            for seg in transcript.segments
+        ]
         
         result = TranscriptionResult(
-            text=getattr(transcript, 'text', ''),
+            text=transcript.text,
             segments=segments,
-            language=getattr(transcript, 'language', 'unknown')
+            language=transcript.language
         )
-        
-        # Print the complete Whisper output for debugging
-        print(f"=== COMPLETE WHISPER OUTPUT ===")
-        print(f"Raw transcript object: {transcript}")
-        print(f"Transcript text: {getattr(transcript, 'text', 'NO TEXT')}")
-        print(f"Transcript language: {getattr(transcript, 'language', 'NO LANGUAGE')}")
-        print(f"Transcript duration: {getattr(transcript, 'duration', 'NO DURATION')}")
-        print(f"Transcript words: {getattr(transcript, 'words', 'NO WORDS')}")
-        print(f"Transcript segments: {getattr(transcript, 'segments', 'NO SEGMENTS')}")
-        print(f"=== END WHISPER OUTPUT ===")
         
         return result
         
@@ -196,11 +124,9 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
         print(f"Transcription error: {str(e)}")  # 添加详细日志
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
-        # Clean up uploaded file and any temporary converted file
+        # Clean up uploaded file
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
-        if 'temp_file_created' in locals() and temp_file_created and 'whisper_file_path' in locals() and os.path.exists(whisper_file_path):
-            os.remove(whisper_file_path)
 
 @app.post("/detect-silence")
 async def detect_silence(
@@ -221,18 +147,13 @@ async def detect_silence(
         
         # Extract audio from file
         if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.webm')):
-            # Video file - extract audio using ffmpeg
+            # Video file - extract audio
+            video = VideoFileClip(file_path)
+            audio = video.audio
             audio_path = f"uploads/temp_audio_{file.filename}.wav"
-            try:
-                (
-                    ffmpeg
-                    .input(file_path)
-                    .output(audio_path, acodec='pcm_s16le', ar=44100)
-                    .overwrite_output()
-                    .run(quiet=True)
-                )
-            except ffmpeg.Error as e:
-                raise HTTPException(status_code=500, detail=f"Audio extraction failed: {e}")
+            audio.write_audiofile(audio_path, verbose=False, logger=None)
+            video.close()
+            audio.close()
         else:
             # Audio file
             audio_path = file_path
@@ -295,56 +216,69 @@ async def cut_video(
         # Determine if it's video or audio
         is_video = file_path.lower().endswith(('.mp4', '.avi', '.mov', '.webm'))
         
-        # Create segments to keep (inverse of cuts)
-        segments_to_keep = []
-        current_time = 0
-        
-        for cut in cuts_data:
-            if current_time < cut["start"]:
-                segments_to_keep.append((current_time, cut["start"]))
-            current_time = cut["end"]
-        
-        # Add final segment if needed (we'll get duration from ffprobe)
-        try:
-            probe = ffmpeg.probe(file_path)
-            duration = float(probe['streams'][0]['duration'])
-            if current_time < duration:
-                segments_to_keep.append((current_time, duration))
-        except:
-            # If we can't get duration, assume we're done
-            pass
-        
-        # Save output
-        output_path = f"outputs/cut_{file.filename}"
-        
-        if segments_to_keep:
-            # Create filter complex for concatenating segments
-            filter_parts = []
-            inputs = []
+        if is_video:
+            # Process video
+            clip = VideoFileClip(file_path)
             
-            for i, (start, end) in enumerate(segments_to_keep):
-                duration = end - start
-                inputs.append(ffmpeg.input(file_path, ss=start, t=duration))
-                filter_parts.append(f"[{i}:v][{i}:a]")
+            # Create segments to keep (inverse of cuts)
+            segments_to_keep = []
+            current_time = 0
             
-            # Concatenate all segments
-            if is_video:
-                concat_filter = f"{''.join(filter_parts)}concat=n={len(segments_to_keep)}:v=1:a=1[outv][outa]"
-                out = ffmpeg.output(*inputs, output_path, vcodec='libx264', acodec='aac', vf=concat_filter, af=concat_filter)
+            for cut in cuts_data:
+                if current_time < cut["start"]:
+                    segments_to_keep.append((current_time, cut["start"]))
+                current_time = cut["end"]
+            
+            # Add final segment if needed
+            if current_time < clip.duration:
+                segments_to_keep.append((current_time, clip.duration))
+            
+            # Concatenate segments
+            if segments_to_keep:
+                final_clips = [clip.subclip(start, end) for start, end in segments_to_keep]
+                final_video = VideoFileClip.concatenate_videoclips(final_clips)
             else:
-                concat_filter = f"{''.join(filter_parts)}concat=n={len(segments_to_keep)}:v=0:a=1[outa]"
-                out = ffmpeg.output(*inputs, output_path, acodec='aac', af=concat_filter)
+                final_video = clip
             
-            try:
-                out.overwrite_output().run(quiet=True)
-            except ffmpeg.Error as e:
-                raise HTTPException(status_code=500, detail=f"Video cutting failed: {e}")
+            # Save output
+            output_path = f"outputs/cut_{file.filename}"
+            final_video.write_videofile(output_path, verbose=False, logger=None)
+            
+            # Clean up
+            clip.close()
+            final_video.close()
+            
         else:
-            # No segments to keep, create empty file or copy original
-            try:
-                ffmpeg.input(file_path).output(output_path).overwrite_output().run(quiet=True)
-            except ffmpeg.Error as e:
-                raise HTTPException(status_code=500, detail=f"Video processing failed: {e}")
+            # Process audio
+            clip = AudioFileClip(file_path)
+            
+            # Create segments to keep (inverse of cuts)
+            segments_to_keep = []
+            current_time = 0
+            
+            for cut in cuts_data:
+                if current_time < cut["start"]:
+                    segments_to_keep.append((current_time, cut["start"]))
+                current_time = cut["end"]
+            
+            # Add final segment if needed
+            if current_time < clip.duration:
+                segments_to_keep.append((current_time, clip.duration))
+            
+            # Concatenate segments
+            if segments_to_keep:
+                final_clips = [clip.subclip(start, end) for start, end in segments_to_keep]
+                final_audio = AudioFileClip.concatenate_audioclips(final_clips)
+            else:
+                final_audio = clip
+            
+            # Save output
+            output_path = f"outputs/cut_{file.filename}"
+            final_audio.write_audiofile(output_path, verbose=False, logger=None)
+            
+            # Clean up
+            clip.close()
+            final_audio.close()
         
         # Clean up input file
         if os.path.exists(file_path):

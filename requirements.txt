@@ -9,11 +9,7 @@ python-multipart>=0.0.5
 openai>=1.0.0
 
 # Audio/Video Processing
-ffmpeg-python>=0.2.0
-# Note: FFmpeg binary must be installed separately:
-# macOS: brew install ffmpeg
-# Ubuntu/Debian: sudo apt install ffmpeg
-# Windows: Download from https://ffmpeg.org/download.html
+moviepy>=1.0.0
 librosa>=0.9.0
 soundfile>=0.10.0
 numpy>=1.21.0
