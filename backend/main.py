@@ -7,22 +7,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import openai
-<<<<<<< HEAD
 import ffmpeg
-=======
-from moviepy.editor import VideoFileClip, AudioFileClip
->>>>>>> 585002513de4e35d317ea84c69d38a3a8837e276
 import librosa
 import numpy as np
 from dotenv import load_dotenv
 
-<<<<<<< HEAD
 # Load environment variables
 load_dotenv()
-=======
-# Load environment variables (override system variables)
-load_dotenv(override=True)
->>>>>>> 585002513de4e35d317ea84c69d38a3a8837e276
 
 app = FastAPI(title="Smart Cut API", version="1.0.0")
 
