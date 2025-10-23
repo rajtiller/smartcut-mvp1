@@ -240,7 +240,7 @@ function App() {
                 color: "#8B5CF6",
                 border: "none",
                 padding: "1rem 2rem",
-                fontSize: "1.2rem",
+                fontSize: "1rem",
                 fontWeight: "600",
                 borderRadius: "8px",
                 cursor: isProcessing ? "not-allowed" : "pointer",
