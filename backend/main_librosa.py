@@ -121,7 +121,7 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
         return result
         
     except Exception as e:
-        print(f"Transcription error: {str(e)}")  # Add detailed logging
+        print(f"Transcription error: {str(e)}")  # 添加详细日志
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
         # Clean up uploaded file
@@ -131,10 +131,10 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
 @app.post("/detect-silence")
 async def detect_silence(
     file: UploadFile = File(...),
-    threshold: float = Form(0.3),  # 降低阈值，更容易检测到静音
-    min_duration: float = Form(0.5)  # 降低最小时长
+    threshold: float = Form(0.5),
+    min_duration: float = Form(1.0)
 ):
-    """Detect silence segments using Whisper's no_speech_prob"""
+    """Detect silence segments in audio/video file"""
     
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -145,106 +145,80 @@ async def detect_silence(
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # Transcribe using OpenAI Whisper to get segments with no_speech_prob
-        with open(file_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json"
-            )
-        
-        # Extract silence segments based on no_speech_prob
-        silence_segments = []
-        
-        print(f"Processing {len(transcript.segments)} segments with threshold={threshold}")
-        
-        # Check if this is a music-only file
-        avg_no_speech_prob = sum(seg["no_speech_prob"] for seg in transcript.segments) / len(transcript.segments)
-        print(f"Average no_speech_prob: {avg_no_speech_prob:.3f}")
-        
-        if avg_no_speech_prob > 0.4:
-            print("⚠️  This appears to be a music-only file (no speech detected)")
-            print("💡 For music files, we'll look for low-energy segments instead")
-            
-            # For music files, create artificial silence segments for demonstration
-            # In a real app, you'd use audio analysis to find quiet parts
-            total_duration = transcript.duration
-            segment_duration = 3.0  # 3-second segments
-            
-            for i in range(int(total_duration / segment_duration)):
-                start_time = i * segment_duration
-                end_time = min((i + 1) * segment_duration, total_duration)
-                duration = end_time - start_time
-                
-                if duration >= min_duration:
-                    # Simulate finding quiet segments in music
-                    confidence = 0.6 + (i % 3) * 0.1  # Varying confidence
-                    
-                    silence_segments.append(SilenceSegment(
-                        start=start_time,
-                        end=end_time,
-                        duration=duration,
-                        confidence=confidence
-                    ))
-                    print(f"  -> Added simulated quiet segment: {start_time:.1f}s-{end_time:.1f}s (confidence={confidence:.3f})")
+        # Extract audio from file
+        if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.webm')):
+            # Video file - extract audio
+            video = VideoFileClip(file_path)
+            audio = video.audio
+            audio_path = f"uploads/temp_audio_{file.filename}.wav"
+            audio.write_audiofile(audio_path, verbose=False, logger=None)
+            video.close()
+            audio.close()
         else:
-            # Original logic for speech-containing files
-            for segment in transcript.segments:
-                no_speech_prob = segment["no_speech_prob"]
-                start_time = segment["start"]
-                end_time = segment["end"]
-                duration = end_time - start_time
+            # Audio file
+            audio_path = file_path
+        
+        # Load audio with librosa
+        y, sr = librosa.load(audio_path, sr=None)
+        
+        # Detect non-silence intervals using librosa
+        non_silence_intervals = librosa.effects.split(y, top_db=20, frame_length=2048, hop_length=512)
+        
+        # Convert to silence segments (inverse of non-silence intervals)
+        silence_segments = []
+        total_duration = len(y) / sr
+        
+        # If no non-silence intervals found, the entire audio is silence
+        if len(non_silence_intervals) == 0:
+            silence_segments.append(SilenceSegment(
+                start=0.0,
+                end=total_duration,
+                duration=total_duration,
+                confidence=1.0
+            ))
+        else:
+            # Find silence segments between non-silence intervals
+            current_time = 0.0
+            
+            for start_frame, end_frame in non_silence_intervals:
+                start_time = start_frame / sr
+                end_time = end_frame / sr
                 
-                print(f"Segment: {start_time:.1f}s-{end_time:.1f}s, no_speech_prob={no_speech_prob:.3f}, duration={duration:.1f}s")
-                
-                # If no_speech_prob is above threshold, consider it silence
-                if no_speech_prob > threshold:
-                    if duration >= min_duration:
-                        # Use no_speech_prob as confidence (higher = more confident it's silence)
-                        confidence = no_speech_prob
-                        
+                # Add silence segment before this non-silence interval
+                if start_time > current_time:
+                    silence_duration = start_time - current_time
+                    if silence_duration >= min_duration:
+                        confidence = min(1.0, silence_duration / 5.0)
                         silence_segments.append(SilenceSegment(
-                            start=start_time,
-                            end=end_time,
-                            duration=duration,
+                            start=current_time,
+                            end=start_time,
+                            duration=silence_duration,
                             confidence=confidence
                         ))
-                        print(f"  -> Added silence segment: {start_time:.1f}s-{end_time:.1f}s (confidence={confidence:.3f})")
-                    else:
-                        print(f"  -> Too short ({duration:.1f}s < {min_duration}s)")
-                else:
-                    print(f"  -> Not silence (prob={no_speech_prob:.3f} <= {threshold})")
+                
+                current_time = end_time
+            
+            # Add silence segment after the last non-silence interval
+            if current_time < total_duration:
+                silence_duration = total_duration - current_time
+                if silence_duration >= min_duration:
+                    confidence = min(1.0, silence_duration / 5.0)
+                    silence_segments.append(SilenceSegment(
+                        start=current_time,
+                        end=total_duration,
+                        duration=silence_duration,
+                        confidence=confidence
+                    ))
         
-        print(f"Total silence segments found: {len(silence_segments)}")
-        
-        # Print detailed silence information
-        if silence_segments:
-            print("\n🔇 检测到的静音片段:")
-            for i, segment in enumerate(silence_segments):
-                print(f"  {i+1}. {segment.start:.1f}s - {segment.end:.1f}s (时长: {segment.duration:.1f}s, 置信度: {segment.confidence:.3f})")
-        else:
-            print("\n✅ 未检测到明显的静音片段")
-            print("   可能原因:")
-            print("   - 音频内容连续，没有明显的静音间隔")
-            print("   - 音乐文件，没有语音静音")
-            print("   - 静音片段太短，被过滤掉了")
-        
-        # Clean up uploaded file
+        # Clean up temporary files
+        if os.path.exists(audio_path) and audio_path != file_path:
+            os.remove(audio_path)
         if os.path.exists(file_path):
             os.remove(file_path)
         
-        return {
-            "silence_segments": silence_segments,
-            "whisper_output": {
-                "text": transcript.text,
-                "language": transcript.language,
-                "duration": transcript.duration,
-                "segments": transcript.segments
-            }
-        }
+        return {"silence_segments": silence_segments}
         
     except Exception as e:
-        print(f"Silence detection error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Silence detection failed: {str(e)}")
 
 @app.post("/cut-video")
