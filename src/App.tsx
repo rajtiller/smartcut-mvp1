@@ -400,6 +400,31 @@ function App() {
               ))}
             </div>
             
+            {/* Cut Button */}
+            <div style={{ textAlign: "center", marginTop: "1rem", marginBottom: "1rem" }}>
+              <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
+                Selected {selectedCuts.size} segments to cut
+              </p>
+              <button
+                onClick={handleCutVideo}
+                disabled={isProcessing || selectedCuts.size === 0}
+                style={{
+                  backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
+                  color: selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
+                  border: "none",
+                  padding: "1rem 2rem",
+                  fontSize: "1rem",
+                  fontWeight: "600",
+                  borderRadius: "8px",
+                  cursor: selectedCuts.size > 0 && !isProcessing ? "pointer" : "not-allowed",
+                  transition: "all 0.2s ease",
+                  opacity: isProcessing ? 0.7 : 1,
+                }}
+              >
+                {isProcessing ? "Processing..." : "Cut Video"}
+              </button>
+            </div>
+            
             {/* Debug Information - Raw Whisper Output */}
             {transcriptionResult?.debug_info && (
               <div style={{ marginTop: "2rem", width: "100%" }}>
