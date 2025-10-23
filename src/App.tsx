@@ -48,6 +48,10 @@ function App() {
     fileInput?.click();
   };
 
+  const handleStepClick = (step: 'upload' | 'transcribe' | 'silence' | 'cut' | 'download') => {
+    setCurrentStep(step);
+  };
+
   const handleTranscribe = async () => {
     if (!selectedFile) return;
     
@@ -196,8 +200,9 @@ function App() {
         }}
       >
         {['upload', 'transcribe', 'silence', 'cut', 'download'].map((step, index) => (
-          <div
+          <button
             key={step}
+            onClick={() => handleStepClick(step as 'upload' | 'transcribe' | 'silence' | 'cut' | 'download')}
             style={{
               padding: "0.5rem 1rem",
               borderRadius: "20px",
@@ -206,10 +211,23 @@ function App() {
               fontSize: "0.9rem",
               fontWeight: "600",
               textTransform: "capitalize",
+              border: "none",
+              cursor: "pointer",
+              transition: "opacity 0.2s, transform 0.2s",
+            }}
+            onMouseEnter={(e) => {
+              if (currentStep !== step) {
+                e.currentTarget.style.opacity = "0.8";
+                e.currentTarget.style.transform = "scale(1.05)";
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = "1";
+              e.currentTarget.style.transform = "scale(1)";
             }}
           >
             {step}
-          </div>
+          </button>
         ))}
       </div>
 
@@ -284,143 +302,221 @@ function App() {
         )}
 
         {/* Step 2: Transcription Results */}
-        {currentStep === 'transcribe' && transcriptionResult && (
+        {currentStep === 'transcribe' && (
           <div style={{ width: "100%", textAlign: "center" }}>
-            <h3 style={{ marginBottom: "1rem" }}>Transcription Complete</h3>
-            <div
-              style={{
-                backgroundColor: "rgba(255,255,255,0.1)",
-                padding: "1rem",
-                borderRadius: "8px",
-                marginBottom: "1rem",
-                maxHeight: "200px",
-                overflowY: "auto",
-              }}
-            >
-              <p style={{ fontSize: "0.9rem", lineHeight: "1.5" }}>
-                {transcriptionResult.text}
-              </p>
-            </div>
-            <p style={{ fontSize: "0.8rem", opacity: 0.8 }}>
-              Language: {transcriptionResult.language} | 
-              Segments: {transcriptionResult.segments.length}
-            </p>
+            {!transcriptionResult ? (
+              <div>
+                <h3 style={{ marginBottom: "1rem" }}>Transcription</h3>
+                <p style={{ fontSize: "1rem", opacity: 0.8, marginBottom: "1rem" }}>
+                  Upload a file and start processing to see transcription results.
+                </p>
+                <button
+                  onClick={() => setCurrentStep('upload')}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.2)",
+                    color: "white",
+                    border: "2px solid white",
+                    padding: "0.8rem 1.5rem",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Go to Upload
+                </button>
+              </div>
+            ) : (
+              <>
+                <h3 style={{ marginBottom: "1rem" }}>Transcription Complete</h3>
+                <div
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.1)",
+                    padding: "1rem",
+                    borderRadius: "8px",
+                    marginBottom: "1rem",
+                    maxHeight: "200px",
+                    overflowY: "auto",
+                  }}
+                >
+                  <p style={{ fontSize: "0.9rem", lineHeight: "1.5" }}>
+                    {transcriptionResult.text}
+                  </p>
+                </div>
+                <p style={{ fontSize: "0.8rem", opacity: 0.8 }}>
+                  Language: {transcriptionResult.language} | 
+                  Segments: {transcriptionResult.segments.length}
+                </p>
+              </>
+            )}
           </div>
         )}
 
         {/* Step 3: Silence Detection */}
-        {currentStep === 'silence' && silenceSegments.length > 0 && (
+        {currentStep === 'silence' && (
           <div style={{ width: "100%" }}>
-            <h3 style={{ marginBottom: "1rem", textAlign: "center" }}>
-              Silence Segments Found ({silenceSegments.length})
-            </h3>
-            <div
-              style={{
-                backgroundColor: "rgba(255,255,255,0.1)",
-                padding: "1rem",
-                borderRadius: "8px",
-                maxHeight: "300px",
-                overflowY: "auto",
-              }}
-            >
-              {silenceSegments.map((segment, index) => (
-                <div
-                  key={index}
-                  onClick={() => toggleCutSelection(index)}
+            {silenceSegments.length === 0 ? (
+              <div style={{ textAlign: "center" }}>
+                <h3 style={{ marginBottom: "1rem" }}>Silence Detection</h3>
+                <p style={{ fontSize: "1rem", opacity: 0.8, marginBottom: "1rem" }}>
+                  Upload a file and start processing to detect silence segments.
+                </p>
+                <button
+                  onClick={() => setCurrentStep('upload')}
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "0.5rem",
-                    margin: "0.25rem 0",
-                    backgroundColor: selectedCuts.has(index) ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.1)",
-                    borderRadius: "4px",
+                    backgroundColor: "rgba(255,255,255,0.2)",
+                    color: "white",
+                    border: "2px solid white",
+                    padding: "0.8rem 1.5rem",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    borderRadius: "8px",
                     cursor: "pointer",
-                    border: selectedCuts.has(index) ? "2px solid white" : "2px solid transparent",
                   }}
                 >
-                  <div>
-                    <span style={{ fontWeight: "600" }}>
-                      {formatTime(segment.start)} - {formatTime(segment.end)}
-                    </span>
-                    <span style={{ marginLeft: "1rem", opacity: 0.8 }}>
-                      ({segment.duration.toFixed(1)}s)
-                    </span>
-                  </div>
-                  <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>
-                    Confidence: {(segment.confidence * 100).toFixed(0)}%
-                  </div>
+                  Go to Upload
+                </button>
+              </div>
+            ) : (
+              <>
+                <h3 style={{ marginBottom: "1rem", textAlign: "center" }}>
+                  Silence Segments Found ({silenceSegments.length})
+                </h3>
+                <div
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.1)",
+                    padding: "1rem",
+                    borderRadius: "8px",
+                    maxHeight: "300px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {silenceSegments.map((segment, index) => (
+                    <div
+                      key={index}
+                      onClick={() => toggleCutSelection(index)}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "0.5rem",
+                        margin: "0.25rem 0",
+                        backgroundColor: selectedCuts.has(index) ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.1)",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        border: selectedCuts.has(index) ? "2px solid white" : "2px solid transparent",
+                      }}
+                    >
+                      <div>
+                        <span style={{ fontWeight: "600" }}>
+                          {formatTime(segment.start)} - {formatTime(segment.end)}
+                        </span>
+                        <span style={{ marginLeft: "1rem", opacity: 0.8 }}>
+                          ({segment.duration.toFixed(1)}s)
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>
+                        Confidence: {(segment.confidence * 100).toFixed(0)}%
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
-            <div style={{ textAlign: "center", marginTop: "1rem" }}>
-              <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
-                Selected {selectedCuts.size} segments to cut
-              </p>
-              <button
-                onClick={handleCutVideo}
-                disabled={isProcessing || selectedCuts.size === 0}
-                style={{
-                  backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
-                  color: selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
-                  border: "none",
-                  padding: "1rem 2rem",
-                  fontSize: "1rem",
-                  fontWeight: "600",
-                  borderRadius: "8px",
-                  cursor: selectedCuts.size > 0 && !isProcessing ? "pointer" : "not-allowed",
-                }}
-              >
-                {isProcessing ? "Processing..." : `Cut ${selectedCuts.size} Segments`}
-              </button>
-            </div>
+                <div style={{ textAlign: "center", marginTop: "1rem" }}>
+                  <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
+                    Selected {selectedCuts.size} segments to cut
+                  </p>
+                  <button
+                    onClick={handleCutVideo}
+                    disabled={isProcessing || selectedCuts.size === 0}
+                    style={{
+                      backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
+                      color: selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
+                      border: "none",
+                      padding: "1rem 2rem",
+                      fontSize: "1rem",
+                      fontWeight: "600",
+                      borderRadius: "8px",
+                      cursor: selectedCuts.size > 0 && !isProcessing ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    {isProcessing ? "Processing..." : `Cut ${selectedCuts.size} Segments`}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         )}
 
         {/* Step 4: Download */}
         {currentStep === 'download' && (
           <div style={{ textAlign: "center" }}>
-            <h3 style={{ marginBottom: "1rem" }}>Video Cut Successfully!</h3>
-            <p style={{ marginBottom: "1rem", opacity: 0.9 }}>
-              Your processed file is ready for download.
-            </p>
-            <button
-              onClick={() => window.open(`http://localhost:8000/download/cut_${selectedFile?.name}`, '_blank')}
-              style={{
-                backgroundColor: "white",
-                color: "#8B5CF6",
-                border: "none",
-                padding: "1rem 2rem",
-                fontSize: "1rem",
-                fontWeight: "600",
-                borderRadius: "8px",
-                cursor: "pointer",
-                marginRight: "1rem",
-              }}
-            >
-              Download File
-            </button>
-            <button
-              onClick={() => {
-                setSelectedFile(null);
-                setTranscriptionResult(null);
-                setSilenceSegments([]);
-                setSelectedCuts(new Set());
-                setCurrentStep('upload');
-              }}
-              style={{
-                backgroundColor: "rgba(255,255,255,0.2)",
-                color: "white",
-                border: "2px solid white",
-                padding: "1rem 2rem",
-                fontSize: "1rem",
-                fontWeight: "600",
-                borderRadius: "8px",
-                cursor: "pointer",
-              }}
-            >
-              Process Another File
-            </button>
+            {!selectedFile ? (
+              <div>
+                <h3 style={{ marginBottom: "1rem" }}>Download</h3>
+                <p style={{ fontSize: "1rem", opacity: 0.8, marginBottom: "1rem" }}>
+                  Upload a file and complete the processing to download your result.
+                </p>
+                <button
+                  onClick={() => setCurrentStep('upload')}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.2)",
+                    color: "white",
+                    border: "2px solid white",
+                    padding: "0.8rem 1.5rem",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Go to Upload
+                </button>
+              </div>
+            ) : (
+              <>
+                <h3 style={{ marginBottom: "1rem" }}>Video Cut Successfully!</h3>
+                <p style={{ marginBottom: "1rem", opacity: 0.9 }}>
+                  Your processed file is ready for download.
+                </p>
+                <button
+                  onClick={() => window.open(`http://localhost:8000/download/cut_${selectedFile?.name}`, '_blank')}
+                  style={{
+                    backgroundColor: "white",
+                    color: "#8B5CF6",
+                    border: "none",
+                    padding: "1rem 2rem",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    marginRight: "1rem",
+                  }}
+                >
+                  Download File
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedFile(null);
+                    setTranscriptionResult(null);
+                    setSilenceSegments([]);
+                    setSelectedCuts(new Set());
+                    setCurrentStep('upload');
+                  }}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.2)",
+                    color: "white",
+                    border: "2px solid white",
+                    padding: "1rem 2rem",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Process Another File
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>
