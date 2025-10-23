@@ -131,8 +131,8 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
 @app.post("/detect-silence")
 async def detect_silence(
     file: UploadFile = File(...),
-    threshold: float = Form(0.3),  # 降低阈值，更容易检测到静音
-    min_duration: float = Form(0.5)  # 降低最小时长
+    threshold: float = Form(0.3),  # Lower threshold for easier silence detection
+    min_duration: float = Form(0.5)  # Lower minimum duration
 ):
     """Detect silence segments using Whisper's no_speech_prob"""
     
@@ -282,15 +282,15 @@ async def detect_silence(
         
         # Print detailed silence information
         if silence_segments:
-            print("\n🔇 检测到的静音片段:")
+            print("\n🔇 Detected silence segments:")
             for i, segment in enumerate(silence_segments):
-                print(f"  {i+1}. {segment.start:.1f}s - {segment.end:.1f}s (时长: {segment.duration:.1f}s, 置信度: {segment.confidence:.3f})")
+                print(f"  {i+1}. {segment.start:.1f}s - {segment.end:.1f}s (duration: {segment.duration:.1f}s, confidence: {segment.confidence:.3f})")
         else:
-            print("\n✅ 未检测到明显的静音片段")
-            print("   可能原因:")
-            print("   - 音频内容连续，没有明显的静音间隔")
-            print("   - 音乐文件，没有语音静音")
-            print("   - 静音片段太短，被过滤掉了")
+            print("\n✅ No obvious silence segments detected")
+            print("   Possible reasons:")
+            print("   - Audio content is continuous, no obvious silence intervals")
+            print("   - Music file without speech pauses")
+            print("   - Silence segments are too short and filtered out")
         
         # Clean up uploaded file
         if os.path.exists(file_path):
@@ -393,8 +393,8 @@ async def cut_video(
                 output_path, 
                 verbose=False, 
                 logger=None,
-                audio_codec='aac',  # 确保音频编码
-                temp_audiofile='temp-audio.m4a'  # 临时音频文件
+                audio_codec='aac',  # Ensure audio encoding
+                temp_audiofile='temp-audio.m4a'  # Temporary audio file
             )
             print(f"Video saved successfully: {output_path}")
             
