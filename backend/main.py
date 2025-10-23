@@ -1,6 +1,7 @@
 import os
 import shutil
 from typing import List, Optional, Dict
+import ffmpeg
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -249,6 +250,10 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
             and os.path.exists(whisper_file_path)
         ):
             os.remove(whisper_file_path)
+
+class SilenceDetectionRequest(BaseModel):
+    segments: List[TranscriptionSegment]
+    min_duration: float = 1.0
 
 @app.post("/detect-silence")
 async def detect_silence(request: SilenceDetectionRequest):
