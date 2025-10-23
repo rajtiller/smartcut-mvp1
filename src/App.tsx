@@ -34,17 +34,20 @@ interface TranscriptionResult {
 
 function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
+  const [transcriptionResult, setTranscriptionResult] =
+    useState<TranscriptionResult | null>(null);
   const [silenceSegments, setSilenceSegments] = useState<SilenceSegment[]>([]);
   const [selectedCuts, setSelectedCuts] = useState<Set<number>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
-  const [currentStep, setCurrentStep] = useState<'upload' | 'transcribe' | 'silence' | 'cut' | 'download'>('upload');
+  const [currentStep, setCurrentStep] = useState<
+    "upload" | "transcribe" | "silence" | "cut" | "download"
+  >("upload");
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (file) {
       setSelectedFile(file);
-      setCurrentStep('upload');
+      setCurrentStep("upload");
     }
   };
 
@@ -54,30 +57,30 @@ function App() {
   };
   const handleTranscribe = async () => {
     if (!selectedFile) return;
-    
+
     setIsProcessing(true);
     try {
       const formData = new FormData();
-      formData.append('file', selectedFile);
-      
-      const response = await fetch('http://localhost:8000/upload', {
-        method: 'POST',
+      formData.append("file", selectedFile);
+
+      const response = await fetch("http://localhost:8000/upload", {
+        method: "POST",
         body: formData,
       });
-      
+
       if (!response.ok) {
-        throw new Error('Transcription failed');
+        throw new Error("Transcription failed");
       }
-      
+
       const result = await response.json();
       setTranscriptionResult(result);
-      setCurrentStep('transcribe');
-      
+      setCurrentStep("transcribe");
+
       // Automatically detect silence
       await handleDetectSilence();
     } catch (error) {
-      console.error('Transcription error:', error);
-      alert('Transcription failed. Please try again.');
+      console.error("Transcription error:", error);
+      alert("Transcription failed. Please try again.");
     } finally {
       setIsProcessing(false);
     }
@@ -85,29 +88,29 @@ function App() {
 
   const handleDetectSilence = async () => {
     if (!selectedFile) return;
-    
+
     setIsProcessing(true);
     try {
       const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('threshold', '0.5');
-      formData.append('min_duration', '1.0');
-      
-      const response = await fetch('http://localhost:8000/detect-silence', {
-        method: 'POST',
+      formData.append("file", selectedFile);
+      formData.append("threshold", "0.5");
+      formData.append("min_duration", "1.0");
+
+      const response = await fetch("http://localhost:8000/detect-silence", {
+        method: "POST",
         body: formData,
       });
-      
+
       if (!response.ok) {
-        throw new Error('Silence detection failed');
+        throw new Error("Silence detection failed");
       }
-      
+
       const result = await response.json();
       setSilenceSegments(result.silence_segments);
-      setCurrentStep('silence');
+      setCurrentStep("silence");
     } catch (error) {
-      console.error('Silence detection error:', error);
-      alert('Silence detection failed. Please try again.');
+      console.error("Silence detection error:", error);
+      alert("Silence detection failed. Please try again.");
     } finally {
       setIsProcessing(false);
     }
@@ -115,29 +118,39 @@ function App() {
 
   const handleCutVideo = async () => {
     if (!selectedFile || selectedCuts.size === 0) return;
-    
+
     setIsProcessing(true);
     try {
-      const cutsToMake = Array.from(selectedCuts).map(index => silenceSegments[index]);
-      
+      const cutsToMake = Array.from(selectedCuts).map(
+        (index) => silenceSegments[index]
+      );
+
       const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('cuts', JSON.stringify(cutsToMake));
-      
-      const response = await fetch('http://localhost:8000/cut-video', {
-        method: 'POST',
+      formData.append("file", selectedFile);
+      formData.append("cuts", JSON.stringify(cutsToMake));
+
+      const response = await fetch("http://localhost:8000/cut-video", {
+        method: "POST",
         body: formData,
       });
-      
+
       if (!response.ok) {
-        throw new Error('Video cutting failed');
+        const errorData = await response
+          .json()
+          .catch(() => ({ detail: "Unknown error" }));
+        throw new Error(errorData.detail || "Video cutting failed");
       }
-      
+
       const result = await response.json();
-      setCurrentStep('download');
+      console.log("Cut result:", result);
+      setCurrentStep("download");
     } catch (error) {
-      console.error('Video cutting error:', error);
-      alert('Video cutting failed. Please try again.');
+      console.error("Video cutting error:", error);
+      alert(
+        `Video cutting failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`
+      );
     } finally {
       setIsProcessing(false);
     }
@@ -156,7 +169,7 @@ function App() {
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
   return (
@@ -200,22 +213,25 @@ function App() {
           justifyContent: "center",
         }}
       >
-        {['upload', 'transcribe', 'silence', 'cut', 'download'].map((step, index) => (
-          <div
-            key={step}
-            style={{
-              padding: "0.5rem 1rem",
-              borderRadius: "20px",
-              backgroundColor: currentStep === step ? "white" : "rgba(255,255,255,0.2)",
-              color: currentStep === step ? "#8B5CF6" : "white",
-              fontSize: "0.9rem",
-              fontWeight: "600",
-              textTransform: "capitalize",
-            }}
-          >
-            {step}
-          </div>
-        ))}
+        {["upload", "transcribe", "silence", "cut", "download"].map(
+          (step, index) => (
+            <div
+              key={step}
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: "20px",
+                backgroundColor:
+                  currentStep === step ? "white" : "rgba(255,255,255,0.2)",
+                color: currentStep === step ? "#8B5CF6" : "white",
+                fontSize: "0.9rem",
+                fontWeight: "600",
+                textTransform: "capitalize",
+              }}
+            >
+              {step}
+            </div>
+          )
+        )}
       </div>
 
       <div
@@ -230,7 +246,7 @@ function App() {
         }}
       >
         {/* Step 1: File Upload */}
-        {currentStep === 'upload' && (
+        {currentStep === "upload" && (
           <>
             <button
               onClick={triggerFileSelect}
@@ -262,7 +278,13 @@ function App() {
 
             {selectedFile && (
               <div style={{ textAlign: "center", marginTop: "1rem" }}>
-                <p style={{ fontSize: "1rem", opacity: 0.9, marginBottom: "1rem" }}>
+                <p
+                  style={{
+                    fontSize: "1rem",
+                    opacity: 0.9,
+                    marginBottom: "1rem",
+                  }}
+                >
                   Selected: {selectedFile.name}
                 </p>
                 <button
@@ -288,7 +310,7 @@ function App() {
         )}
 
         {/* Step 2: Transcription Results */}
-        {currentStep === 'transcribe' && transcriptionResult && (
+        {currentStep === "transcribe" && transcriptionResult && (
           <div style={{ width: "100%", textAlign: "center" }}>
             <h3 style={{ marginBottom: "1rem" }}>Transcription Complete</h3>
             <div
@@ -306,14 +328,14 @@ function App() {
               </p>
             </div>
             <p style={{ fontSize: "0.8rem", opacity: 0.8 }}>
-              Language: {transcriptionResult.language} | 
-              Segments: {transcriptionResult.segments.length}
+              Language: {transcriptionResult.language} | Segments:{" "}
+              {transcriptionResult.segments.length}
             </p>
           </div>
         )}
 
         {/* Step 3: Silence Detection */}
-        {currentStep === 'silence' && silenceSegments.length > 0 && (
+        {currentStep === "silence" && silenceSegments.length > 0 && (
           <div style={{ width: "100%" }}>
             <h3 style={{ marginBottom: "1rem", textAlign: "center" }}>
               Silence Segments Found ({silenceSegments.length})
@@ -337,10 +359,14 @@ function App() {
                     alignItems: "center",
                     padding: "0.5rem",
                     margin: "0.25rem 0",
-                    backgroundColor: selectedCuts.has(index) ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.1)",
+                    backgroundColor: selectedCuts.has(index)
+                      ? "rgba(255,255,255,0.3)"
+                      : "rgba(255,255,255,0.1)",
                     borderRadius: "4px",
                     cursor: "pointer",
-                    border: selectedCuts.has(index) ? "2px solid white" : "2px solid transparent",
+                    border: selectedCuts.has(index)
+                      ? "2px solid white"
+                      : "2px solid transparent",
                   }}
                 >
                   <div>
@@ -365,31 +391,43 @@ function App() {
                 onClick={handleCutVideo}
                 disabled={isProcessing || selectedCuts.size === 0}
                 style={{
-                  backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
-                  color: selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
+                  backgroundColor:
+                    selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
+                  color:
+                    selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
                   border: "none",
                   padding: "1rem 2rem",
                   fontSize: "1rem",
                   fontWeight: "600",
                   borderRadius: "8px",
-                  cursor: selectedCuts.size > 0 && !isProcessing ? "pointer" : "not-allowed",
+                  cursor:
+                    selectedCuts.size > 0 && !isProcessing
+                      ? "pointer"
+                      : "not-allowed",
                 }}
               >
-                {isProcessing ? "Processing..." : `Cut ${selectedCuts.size} Segments`}
+                {isProcessing
+                  ? "Processing..."
+                  : `Cut ${selectedCuts.size} Segments`}
               </button>
             </div>
           </div>
         )}
 
         {/* Step 4: Download */}
-        {currentStep === 'download' && (
+        {currentStep === "download" && (
           <div style={{ textAlign: "center" }}>
             <h3 style={{ marginBottom: "1rem" }}>Video Cut Successfully!</h3>
             <p style={{ marginBottom: "1rem", opacity: 0.9 }}>
               Your processed file is ready for download.
             </p>
             <button
-              onClick={() => window.open(`http://localhost:8000/download/cut_${selectedFile?.name}`, '_blank')}
+              onClick={() =>
+                window.open(
+                  `http://localhost:8000/download/cut_${selectedFile?.name}`,
+                  "_blank"
+                )
+              }
               style={{
                 backgroundColor: "white",
                 color: "#8B5CF6",
@@ -410,7 +448,7 @@ function App() {
                 setTranscriptionResult(null);
                 setSilenceSegments([]);
                 setSelectedCuts(new Set());
-                setCurrentStep('upload');
+                setCurrentStep("upload");
               }}
               style={{
                 backgroundColor: "rgba(255,255,255,0.2)",
