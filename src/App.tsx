@@ -31,6 +31,7 @@ function App() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [silenceSegments, setSilenceSegments] = useState<SilenceSegment[]>([]);
+  const [whisperOutput, setWhisperOutput] = useState<any>(null);
   const [selectedCuts, setSelectedCuts] = useState<Set<number>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
   const [currentStep, setCurrentStep] = useState<'upload' | 'transcribe' | 'silence' | 'cut' | 'download'>('upload');
@@ -100,6 +101,7 @@ function App() {
       
       const result = await response.json();
       setSilenceSegments(result.silence_segments);
+      setWhisperOutput(result.whisper_output);
       setCurrentStep('silence');
     } catch (error) {
       console.error('Silence detection error:', error);
@@ -195,22 +197,40 @@ function App() {
           justifyContent: "center",
         }}
       >
-        {['upload', 'transcribe', 'silence', 'cut', 'download'].map((step, index) => (
-          <div
-            key={step}
-            style={{
-              padding: "0.5rem 1rem",
-              borderRadius: "20px",
-              backgroundColor: currentStep === step ? "white" : "rgba(255,255,255,0.2)",
-              color: currentStep === step ? "#8B5CF6" : "white",
-              fontSize: "0.9rem",
-              fontWeight: "600",
-              textTransform: "capitalize",
-            }}
-          >
-            {step}
-          </div>
-        ))}
+        {['upload', 'transcribe', 'silence', 'cut', 'download'].map((step, index) => {
+          const isClickable = (
+            (step === 'transcribe' && transcriptionResult) ||
+            (step === 'silence' && silenceSegments.length > 0) ||
+            (step === 'cut' && selectedCuts.size > 0) ||
+            (step === 'download' && currentStep === 'download')
+          );
+          
+          return (
+            <div
+              key={step}
+              onClick={() => {
+                if (isClickable) {
+                  setCurrentStep(step as any);
+                }
+              }}
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: "20px",
+                backgroundColor: currentStep === step ? "white" : "rgba(255,255,255,0.2)",
+                color: currentStep === step ? "#8B5CF6" : "white",
+                fontSize: "0.9rem",
+                fontWeight: "600",
+                textTransform: "capitalize",
+                cursor: isClickable ? "pointer" : "default",
+                opacity: isClickable ? 1 : 0.6,
+                transition: "all 0.2s ease",
+                transform: isClickable ? "scale(1)" : "scale(0.95)",
+              }}
+            >
+              {step}
+            </div>
+          );
+        })}
       </div>
 
       <div
@@ -228,35 +248,35 @@ function App() {
         {/* Step 1: File Upload */}
         {currentStep === 'upload' && (
           <>
-            <button
-              onClick={triggerFileSelect}
+        <button
+          onClick={triggerFileSelect}
               disabled={isProcessing}
-              style={{
-                backgroundColor: "white",
-                color: "#8B5CF6",
-                border: "none",
-                padding: "1rem 2rem",
-                fontSize: "1.2rem",
-                fontWeight: "600",
-                borderRadius: "8px",
+          style={{
+            backgroundColor: "white",
+            color: "#8B5CF6",
+            border: "none",
+            padding: "1rem 2rem",
+            fontSize: "1.2rem",
+            fontWeight: "600",
+            borderRadius: "8px",
                 cursor: isProcessing ? "not-allowed" : "pointer",
-                boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
-                transition: "transform 0.2s, box-shadow 0.2s",
+            boxShadow: "0 4px 6px rgba(0, 0, 0, 0.1)",
+            transition: "transform 0.2s, box-shadow 0.2s",
                 opacity: isProcessing ? 0.6 : 1,
               }}
             >
               {isProcessing ? "Processing..." : "Click here to add files"}
-            </button>
+        </button>
 
-            <input
-              id="fileInput"
-              type="file"
-              onChange={handleFileSelect}
-              style={{ display: "none" }}
+        <input
+          id="fileInput"
+          type="file"
+          onChange={handleFileSelect}
+          style={{ display: "none" }}
               accept="audio/*,video/*"
-            />
+        />
 
-            {selectedFile && (
+        {selectedFile && (
               <div style={{ textAlign: "center", marginTop: "1rem" }}>
                 <p style={{ fontSize: "1rem", opacity: 0.9, marginBottom: "1rem" }}>
                   Selected: {selectedFile.name}
@@ -309,71 +329,156 @@ function App() {
         )}
 
         {/* Step 3: Silence Detection */}
-        {currentStep === 'silence' && silenceSegments.length > 0 && (
+        {currentStep === 'silence' && (
           <div style={{ width: "100%" }}>
             <h3 style={{ marginBottom: "1rem", textAlign: "center" }}>
-              Silence Segments Found ({silenceSegments.length})
+              Silence Detection Results
             </h3>
-            <div
-              style={{
-                backgroundColor: "rgba(255,255,255,0.1)",
-                padding: "1rem",
-                borderRadius: "8px",
-                maxHeight: "300px",
-                overflowY: "auto",
-              }}
-            >
-              {silenceSegments.map((segment, index) => (
+            
+            {/* Whisper Raw Output */}
+            {whisperOutput && (
+              <div style={{ marginBottom: "2rem" }}>
+                <h4 style={{ marginBottom: "0.5rem", textAlign: "center", opacity: 0.9 }}>
+                  🔍 Whisper Raw Output
+                </h4>
                 <div
-                  key={index}
-                  onClick={() => toggleCutSelection(index)}
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "0.5rem",
-                    margin: "0.25rem 0",
-                    backgroundColor: selectedCuts.has(index) ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.1)",
-                    borderRadius: "4px",
-                    cursor: "pointer",
-                    border: selectedCuts.has(index) ? "2px solid white" : "2px solid transparent",
+                    backgroundColor: "rgba(255,255,255,0.1)",
+                    padding: "1rem",
+                    borderRadius: "8px",
+                    fontSize: "0.8rem",
+                    fontFamily: "monospace",
+                    maxHeight: "200px",
+                    overflowY: "auto",
+                    whiteSpace: "pre-wrap",
                   }}
                 >
-                  <div>
-                    <span style={{ fontWeight: "600" }}>
-                      {formatTime(segment.start)} - {formatTime(segment.end)}
-                    </span>
-                    <span style={{ marginLeft: "1rem", opacity: 0.8 }}>
-                      ({segment.duration.toFixed(1)}s)
-                    </span>
-                  </div>
-                  <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>
-                    Confidence: {(segment.confidence * 100).toFixed(0)}%
-                  </div>
+                  {JSON.stringify(whisperOutput, null, 2)}
                 </div>
-              ))}
-            </div>
-            <div style={{ textAlign: "center", marginTop: "1rem" }}>
-              <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
-                Selected {selectedCuts.size} segments to cut
-              </p>
-              <button
-                onClick={handleCutVideo}
-                disabled={isProcessing || selectedCuts.size === 0}
-                style={{
-                  backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
-                  color: selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
-                  border: "none",
-                  padding: "1rem 2rem",
-                  fontSize: "1rem",
-                  fontWeight: "600",
-                  borderRadius: "8px",
-                  cursor: selectedCuts.size > 0 && !isProcessing ? "pointer" : "not-allowed",
-                }}
-              >
-                {isProcessing ? "Processing..." : `Cut ${selectedCuts.size} Segments`}
-              </button>
-            </div>
+              </div>
+            )}
+            
+            {silenceSegments.length > 0 ? (
+              <>
+                <p style={{ textAlign: "center", marginBottom: "1rem", opacity: 0.9 }}>
+                  Found {silenceSegments.length} silence segments
+                </p>
+                <div
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.1)",
+                    padding: "1rem",
+                    borderRadius: "8px",
+                    maxHeight: "300px",
+                    overflowY: "auto",
+                  }}
+                >
+                  {silenceSegments.map((segment, index) => (
+                    <div
+                      key={index}
+                      onClick={() => toggleCutSelection(index)}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        padding: "0.5rem",
+                        margin: "0.25rem 0",
+                        backgroundColor: selectedCuts.has(index) ? "rgba(255,255,255,0.3)" : "rgba(255,255,255,0.1)",
+                        borderRadius: "4px",
+                        cursor: "pointer",
+                        border: selectedCuts.has(index) ? "2px solid white" : "2px solid transparent",
+                      }}
+                    >
+                      <div>
+                        <span style={{ fontWeight: "600" }}>
+                          {formatTime(segment.start)} - {formatTime(segment.end)}
+                        </span>
+                        <span style={{ marginLeft: "1rem", opacity: 0.8 }}>
+                          ({segment.duration.toFixed(1)}s)
+                        </span>
+                      </div>
+                      <div style={{ fontSize: "0.8rem", opacity: 0.8 }}>
+                        Confidence: {(segment.confidence * 100).toFixed(0)}%
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ textAlign: "center", marginTop: "1rem" }}>
+                  <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
+                    Selected {selectedCuts.size} segments to cut
+                  </p>
+                  <button
+                    onClick={handleCutVideo}
+                    disabled={isProcessing || selectedCuts.size === 0}
+                    style={{
+                      backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
+                      color: selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
+                      border: "none",
+                      padding: "1rem 2rem",
+                      fontSize: "1rem",
+                      fontWeight: "600",
+                      borderRadius: "8px",
+                      cursor: selectedCuts.size > 0 && !isProcessing ? "pointer" : "not-allowed",
+                    }}
+                  >
+                    {isProcessing ? "Processing..." : `Cut ${selectedCuts.size} Segments`}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div style={{ textAlign: "center" }}>
+                <div
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.1)",
+                    padding: "2rem",
+                    borderRadius: "8px",
+                    marginBottom: "1rem",
+                  }}
+                >
+                  <p style={{ fontSize: "1.1rem", marginBottom: "0.5rem" }}>
+                    ✅ No obvious silence segments detected
+                  </p>
+                  <p style={{ fontSize: "0.9rem", opacity: 0.8, lineHeight: "1.5" }}>
+                    This could mean:<br/>
+                    • The audio content is continuous<br/>
+                    • It's a music file without speech pauses<br/>
+                    • Silence segments are too short to detect
+                  </p>
+                </div>
+                <button
+                  onClick={() => setCurrentStep('transcribe')}
+                  style={{
+                    backgroundColor: "rgba(255,255,255,0.2)",
+                    color: "white",
+                    border: "2px solid white",
+                    padding: "0.8rem 1.5rem",
+                    fontSize: "1rem",
+                    fontWeight: "600",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                    marginRight: "1rem",
+                  }}
+                >
+                  Back to Transcription
+                </button>
+                <button
+                  onClick={() => {
+                    setCurrentStep('download');
+                  }}
+            style={{
+                    backgroundColor: "white",
+                    color: "#8B5CF6",
+                    border: "none",
+                    padding: "0.8rem 1.5rem",
+              fontSize: "1rem",
+                    fontWeight: "600",
+                    borderRadius: "8px",
+                    cursor: "pointer",
+                  }}
+                >
+                  Skip Cutting
+                </button>
+              </div>
+            )}
           </div>
         )}
 
