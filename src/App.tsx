@@ -30,6 +30,16 @@ interface TranscriptionResult {
   text: string;
   segments: TranscriptionSegment[];
   language: string;
+  debug_info?: {
+    raw_transcript: string;
+    transcript_text: string;
+    transcript_language: string;
+    transcript_duration: string;
+    transcript_words: string;
+    transcript_segments: string;
+    processed_segments_count: number;
+    segments_structure: string[];
+  };
 }
 
 function App() {
@@ -73,8 +83,8 @@ function App() {
       setTranscriptionResult(result);
       setCurrentStep('transcribe');
       
-      // Automatically detect silence
-      await handleDetectSilence();
+      // Automatically detect silence using the result directly
+      await handleDetectSilenceWithResult(result);
     } catch (error) {
       console.error('Transcription error:', error);
       alert('Transcription failed. Please try again.');
@@ -84,18 +94,24 @@ function App() {
   };
 
   const handleDetectSilence = async () => {
-    if (!selectedFile) return;
-    
+    if (!transcriptionResult) return;
+    await handleDetectSilenceWithResult(transcriptionResult);
+  };
+
+  const handleDetectSilenceWithResult = async (transcriptionData: TranscriptionResult) => {
     setIsProcessing(true);
     try {
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('threshold', '0.5');
-      formData.append('min_duration', '1.0');
+      const requestBody = {
+        segments: transcriptionData.segments,
+        min_duration: 1.0
+      };
       
       const response = await fetch('http://localhost:8000/detect-silence', {
         method: 'POST',
-        body: formData,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestBody),
       });
       
       if (!response.ok) {
@@ -357,6 +373,32 @@ function App() {
                 </div>
               ))}
             </div>
+            
+            {/* Debug Information - Raw Whisper Output */}
+            {transcriptionResult?.debug_info && (
+              <div style={{ marginTop: "2rem", width: "100%" }}>
+                <h4 style={{ marginBottom: "1rem", textAlign: "center", color: "#ffd700" }}>
+                  🔍 Raw Whisper Output Debug Info
+                </h4>
+                <div
+                  style={{
+                    backgroundColor: "rgba(0,0,0,0.3)",
+                    padding: "1rem",
+                    borderRadius: "8px",
+                    maxHeight: "400px",
+                    overflowY: "auto",
+                    fontFamily: "monospace",
+                    fontSize: "0.8rem",
+                    border: "1px solid rgba(255,255,255,0.2)"
+                  }}
+                >
+                  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                    {JSON.stringify(transcriptionResult.debug_info, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
+            
             <div style={{ textAlign: "center", marginTop: "1rem" }}>
               <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
                 Selected {selectedCuts.size} segments to cut

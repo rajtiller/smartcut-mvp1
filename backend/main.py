@@ -1,7 +1,7 @@
 import os
 import tempfile
 import shutil
-from typing import List, Optional
+from typing import List, Optional, Dict
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -50,6 +50,7 @@ class TranscriptionResult(BaseModel):
     text: str
     segments: List[TranscriptionSegment]
     language: str
+    debug_info: Optional[Dict[str, str]] = None
 
 class SilenceSegment(BaseModel):
     start: float
@@ -174,10 +175,23 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
                         no_speech_prob=getattr(seg, "no_speech_prob", 0.0)
                     ))
         
+        # Create debug info for frontend display
+        debug_info = {
+            "raw_transcript": str(transcript),
+            "transcript_text": str(getattr(transcript, 'text', 'NO TEXT')),
+            "transcript_language": str(getattr(transcript, 'language', 'NO LANGUAGE')),
+            "transcript_duration": str(getattr(transcript, 'duration', 'NO DURATION')),
+            "transcript_words": str(getattr(transcript, 'words', 'NO WORDS')),
+            "transcript_segments": str(getattr(transcript, 'segments', 'NO SEGMENTS')),
+            "processed_segments_count": str(len(segments)),
+            "segments_structure": str([str(seg) for seg in segments[:3]] if segments else "No segments")
+        }
+        
         result = TranscriptionResult(
             text=getattr(transcript, 'text', ''),
             segments=segments,
-            language=getattr(transcript, 'language', 'unknown')
+            language=getattr(transcript, 'language', 'unknown'),
+            debug_info=debug_info
         )
         
         # Print the complete Whisper output for debugging
@@ -202,69 +216,47 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
         if 'temp_file_created' in locals() and temp_file_created and 'whisper_file_path' in locals() and os.path.exists(whisper_file_path):
             os.remove(whisper_file_path)
 
+class SilenceDetectionRequest(BaseModel):
+    segments: List[TranscriptionSegment]
+    min_duration: float = 1.0
+
 @app.post("/detect-silence")
-async def detect_silence(
-    file: UploadFile = File(...),
-    threshold: float = Form(0.5),
-    min_duration: float = Form(1.0)
-):
-    """Detect silence segments in audio/video file"""
-    
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
+async def detect_silence(request: SilenceDetectionRequest):
+    """Detect silence segments between transcription segments"""
     
     try:
-        # Save uploaded file
-        file_path = f"uploads/{file.filename}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        segments = request.segments
+        min_duration = request.min_duration
         
-        # Extract audio from file
-        if file_path.lower().endswith(('.mp4', '.avi', '.mov', '.webm')):
-            # Video file - extract audio using ffmpeg
-            audio_path = f"uploads/temp_audio_{file.filename}.wav"
-            try:
-                (
-                    ffmpeg
-                    .input(file_path)
-                    .output(audio_path, acodec='pcm_s16le', ar=44100)
-                    .overwrite_output()
-                    .run(quiet=True)
-                )
-            except ffmpeg.Error as e:
-                raise HTTPException(status_code=500, detail=f"Audio extraction failed: {e}")
-        else:
-            # Audio file
-            audio_path = file_path
+        if not segments:
+            raise HTTPException(status_code=400, detail="No transcription segments provided")
         
-        # Load audio with librosa
-        y, sr = librosa.load(audio_path, sr=None)
-        
-        # Detect silence using librosa
-        intervals = librosa.effects.split(y, top_db=20, frame_length=2048, hop_length=512)
+        # Sort segments by start time
+        sorted_segments = sorted(segments, key=lambda x: x.start)
         
         silence_segments = []
-        for start_frame, end_frame in intervals:
-            start_time = start_frame / sr
-            end_time = end_frame / sr
-            duration = end_time - start_time
+        
+        # Find gaps between consecutive segments
+        for i in range(len(sorted_segments) - 1):
+            current_segment = sorted_segments[i]
+            next_segment = sorted_segments[i + 1]
             
-            if duration >= min_duration:
-                # Calculate confidence based on silence duration
-                confidence = min(1.0, duration / 5.0)  # Max confidence at 5 seconds
+            # Calculate gap between end of current and start of next
+            gap_start = current_segment.end
+            gap_end = next_segment.start
+            gap_duration = gap_end - gap_start
+            
+            # Only consider gaps that are long enough
+            if gap_duration >= min_duration:
+                # Calculate confidence based on gap duration
+                confidence = min(1.0, gap_duration / 5.0)  # Max confidence at 5 seconds
                 
                 silence_segments.append(SilenceSegment(
-                    start=start_time,
-                    end=end_time,
-                    duration=duration,
+                    start=gap_start,
+                    end=gap_end,
+                    duration=gap_duration,
                     confidence=confidence
                 ))
-        
-        # Clean up temporary files
-        if os.path.exists(audio_path) and audio_path != file_path:
-            os.remove(audio_path)
-        if os.path.exists(file_path):
-            os.remove(file_path)
         
         return {"silence_segments": silence_segments}
         
