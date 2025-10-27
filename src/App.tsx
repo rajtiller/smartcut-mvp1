@@ -52,6 +52,7 @@ function App() {
   const [currentStep, setCurrentStep] = useState<
     "upload" | "transcribe" | "silence" | "cut" | "download"
   >("upload");
+  
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -108,6 +109,7 @@ function App() {
         throw new Error("No file selected");
       }
       
+      console.log("Starting silence detection...");
       const formData = new FormData();
       formData.append("file", selectedFile);
       formData.append("min_duration", "1.0");
@@ -123,6 +125,7 @@ function App() {
       }
 
       const result = await response.json();
+      console.log("Silence detection result:", result);
       setSilenceSegments(result.silence_segments);
       setCurrentStep("silence");
     } catch (error) {
@@ -190,23 +193,23 @@ function App() {
   };
 
   return (
-    <div
-      style={{
-        backgroundColor: "#8B5CF6",
-        minHeight: "100vh",
-        width: "100vw",
-        position: "fixed",
-        top: 0,
-        left: 0,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "flex-start",
-        padding: "2rem",
-        color: "white",
-        margin: 0,
-        boxSizing: "border-box",
-        overflow: "auto",
+      <div
+        style={{
+          backgroundColor: "#4A90E2",
+          minHeight: "100vh",
+          width: "100vw",
+          position: "fixed",
+          top: 0,
+          left: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "flex-start",
+          padding: "2rem",
+          color: "white",
+          margin: 0,
+          boxSizing: "border-box",
+          overflow: "auto",
       }}
     >
       <h1
@@ -239,7 +242,7 @@ function App() {
                 borderRadius: "20px",
                 backgroundColor:
                   currentStep === step ? "white" : "rgba(255,255,255,0.2)",
-                color: currentStep === step ? "#8B5CF6" : "white",
+                color: currentStep === step ? "#4A90E2" : "white",
                 fontSize: "0.9rem",
                 fontWeight: "600",
                 textTransform: "capitalize",
@@ -270,7 +273,7 @@ function App() {
               disabled={isProcessing}
               style={{
                 backgroundColor: "white",
-                color: "#8B5CF6",
+                color: "#4A90E2",
                 border: "none",
                 padding: "1rem 2rem",
                 fontSize: "1rem",
@@ -413,7 +416,7 @@ function App() {
                 disabled={isProcessing || selectedCuts.size === 0}
                 style={{
                   backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
-                  color: selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
+                  color: selectedCuts.size > 0 ? "#4A90E2" : "rgba(255,255,255,0.6)",
                   border: "none",
                   padding: "1rem 2rem",
                   fontSize: "1rem",
@@ -471,7 +474,7 @@ function App() {
               }
               style={{
                 backgroundColor: "white",
-                color: "#8B5CF6",
+                color: "#4A90E2",
                 border: "none",
                 padding: "1rem 2rem",
                 fontSize: "1rem",
