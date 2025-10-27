@@ -254,10 +254,15 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
 class SilenceDetectionRequest(BaseModel):
     segments: List[TranscriptionSegment]
     min_duration: float = 1.0
+    total_duration: Optional[float] = None
+
+class SilenceDetectionWithFileRequest(BaseModel):
+    min_duration: float = 1.0
+    threshold: float = 0.4
 
 @app.post("/detect-silence")
 async def detect_silence(request: SilenceDetectionRequest):
-    """Detect silence segments between transcription segments"""
+    """Detect silence segments using 1-second segments with no_speech_prob > 0.6"""
     
     try:
         segments = request.segments
@@ -269,35 +274,287 @@ async def detect_silence(request: SilenceDetectionRequest):
         # Sort segments by start time
         sorted_segments = sorted(segments, key=lambda x: x.start)
         
-        silence_segments = []
+        print(f"=== SILENCE DETECTION DEBUG ===")
+        print(f"Processing {len(sorted_segments)} transcription segments")
+        print(f"Min duration threshold: {min_duration}s")
         
-        # Find gaps between consecutive segments
-        for i in range(len(sorted_segments) - 1):
-            current_segment = sorted_segments[i]
-            next_segment = sorted_segments[i + 1]
+        # Get total duration from the last segment or request
+        total_duration = request.total_duration
+        if not total_duration and sorted_segments:
+            total_duration = sorted_segments[-1].end
+        
+        if not total_duration:
+            raise HTTPException(status_code=400, detail="Total duration not provided")
+        
+        print(f"Total duration: {total_duration}s")
+        
+        # Create 1-second segments and get no_speech_prob for each
+        silence_1s_segments = []
+        
+        # We need the original file path to extract 1s segments
+        # This should be passed in the request or we need to modify the approach
+        # For now, let's assume we have access to the file path
+        # We'll need to modify the request model to include the file path
+        
+        print("Note: This approach requires the original file to extract 1s segments")
+        print("We need to modify the request to include the file path or file content")
+        
+        # For now, let's use the existing segments but extract 1s segments
+        # This is a placeholder - we need the actual file to extract segments
+        for i in range(int(total_duration)):
+            segment_start = float(i)
+            segment_end = float(i + 1)
             
-            # Calculate gap between end of current and start of next
-            gap_start = current_segment.end
-            gap_end = next_segment.start
-            gap_duration = gap_end - gap_start
+            # TODO: Extract 1s segment from original file and send to Whisper
+            # For now, use placeholder logic
+            silence_1s_segments.append({
+                'start': segment_start,
+                'end': segment_end,
+                'no_speech_prob': 0.5  # Placeholder - needs actual Whisper analysis
+            })
+            print(f"1s segment {segment_start}-{segment_end}: no_speech_prob=0.5 (placeholder)")
+        
+        # Filter segments with no_speech_prob < 0.4
+        high_silence_segments = [
+            seg for seg in silence_1s_segments 
+            if seg['no_speech_prob'] < 0.4
+        ]
+        
+        print(f"Found {len(high_silence_segments)} 1s segments with no_speech_prob < 0.4")
+        
+        # Group contiguous segments together
+        silence_segments = []
+        if high_silence_segments:
+            current_start = high_silence_segments[0]['start']
+            current_end = high_silence_segments[0]['end']
             
-            # Only consider gaps that are long enough
-            if gap_duration >= min_duration:
-                # Calculate confidence based on gap duration
-                confidence = min(1.0, gap_duration / 5.0)  # Max confidence at 5 seconds
+            for i in range(1, len(high_silence_segments)):
+                seg = high_silence_segments[i]
                 
+                # If this segment is contiguous with the current group
+                if seg['start'] == current_end:
+                    current_end = seg['end']
+                else:
+                    # End current group and start new one
+                    duration = current_end - current_start
+                    if duration >= min_duration:
+                        confidence = min(1.0, duration / 5.0)
+                        silence_segments.append(SilenceSegment(
+                            start=current_start,
+                            end=current_end,
+                            duration=duration,
+                            confidence=confidence
+                        ))
+                        print(f"Added grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
+                    
+                    current_start = seg['start']
+                    current_end = seg['end']
+            
+            # Add the last group
+            duration = current_end - current_start
+            if duration >= min_duration:
+                confidence = min(1.0, duration / 5.0)
                 silence_segments.append(SilenceSegment(
-                    start=gap_start,
-                    end=gap_end,
-                    duration=gap_duration,
+                    start=current_start,
+                    end=current_end,
+                    duration=duration,
                     confidence=confidence
                 ))
+                print(f"Added final grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
+        
+        print(f"Total grouped silence segments found: {len(silence_segments)}")
+        print(f"=== END SILENCE DETECTION DEBUG ===")
         
         return {"silence_segments": silence_segments}
 
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Silence detection failed: {str(e)}"
+        )
+
+
+@app.post("/detect-silence-5s")
+async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 1.0, threshold: float = 0.4):
+    """Detect silence segments by analyzing each 5-second segment with Whisper"""
+    
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    
+    try:
+        # Save uploaded file
+        file_path = f"uploads/{file.filename}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        # Get total duration
+        try:
+            probe = ffmpeg.probe(file_path)
+            total_duration = float(probe["format"]["duration"])
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Could not get video duration: {e}")
+        
+        print(f"=== 5-SECOND SILENCE DETECTION ===")
+        print(f"File: {file.filename}")
+        print(f"Total duration: {total_duration}s")
+        print(f"Threshold: {threshold}")
+        print(f"Min duration: {min_duration}s")
+        
+        silence_5s_segments = []
+        
+        # Analyze each 5-second segment
+        for i in range(0, int(total_duration), 5):
+            segment_start = float(i)
+            segment_end = min(float(i + 5), total_duration)
+            segment_duration = segment_end - segment_start
+            
+            # Extract 5-second segment using ffmpeg
+            temp_segment_path = f"uploads/temp_segment_{i}.wav"
+            try:
+                (
+                    ffmpeg.input(file_path, ss=segment_start, t=segment_duration)
+                    .output(temp_segment_path, acodec="pcm_s16le", ar=16000)
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+                
+                # Analyze with Whisper
+                with open(temp_segment_path, "rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1", 
+                        file=audio_file, 
+                        response_format="verbose_json"
+                    )
+                
+                # Get no_speech_prob from the transcript
+                no_speech_prob = 0.5  # Default to neutral
+                
+                # Debug: Print transcript structure
+                print(f"Segment {i} transcript type: {type(transcript)}")
+                print(f"Segment {i} transcript attributes: {dir(transcript)}")
+                
+                # Try to get no_speech_prob from segments
+                if hasattr(transcript, 'segments') and transcript.segments:
+                    print(f"Segment {i} has {len(transcript.segments)} segments")
+                    
+                    # Look for no_speech_prob in any segment
+                    for j, seg in enumerate(transcript.segments):
+                        print(f"Segment {i}, sub-segment {j}: {seg}")
+                        
+                        if hasattr(seg, 'no_speech_prob'):
+                            no_speech_prob = seg.no_speech_prob
+                            print(f"Segment {i} no_speech_prob (attr): {no_speech_prob}")
+                            break
+                        elif isinstance(seg, dict) and 'no_speech_prob' in seg:
+                            no_speech_prob = seg['no_speech_prob']
+                            print(f"Segment {i} no_speech_prob (dict): {no_speech_prob}")
+                            break
+                    
+                    if no_speech_prob == 0.5:
+                        print(f"Segment {i} no no_speech_prob found in any sub-segment")
+                else:
+                    print(f"Segment {i} no segments found in transcript")
+                
+                # Fallback: If no segments or no no_speech_prob, check if there's any text
+                if no_speech_prob == 0.5:
+                    transcript_text = getattr(transcript, 'text', '') if hasattr(transcript, 'text') else ''
+                    if transcript_text and transcript_text.strip():
+                        # If there's text, assume it's speech (no_speech_prob = 0)
+                        no_speech_prob = 0.0
+                        print(f"Segment {i} has text '{transcript_text}', setting no_speech_prob to 0.0")
+                    else:
+                        # If no text, assume silence (no_speech_prob = 0)
+                        no_speech_prob = 0.0
+                        print(f"Segment {i} no text found, setting no_speech_prob to 0.0")
+                
+                silence_5s_segments.append({
+                    'start': segment_start,
+                    'end': segment_end,
+                    'no_speech_prob': no_speech_prob
+                })
+                
+                print(f"5s segment {segment_start}-{segment_end}: no_speech_prob={no_speech_prob}")
+                
+                # Clean up temp file
+                os.remove(temp_segment_path)
+                
+            except Exception as e:
+                print(f"Error processing segment {i}: {e}")
+                # If there's a 500 error or any error, set to 0.5
+                silence_5s_segments.append({
+                    'start': segment_start,
+                    'end': segment_end,
+                    'no_speech_prob': 0.5
+                })
+        
+        # Filter segments with no_speech_prob > threshold
+        high_silence_segments = [
+            seg for seg in silence_5s_segments 
+            if seg['no_speech_prob'] > threshold
+        ]
+        
+        print(f"Found {len(high_silence_segments)} 5s segments with no_speech_prob > {threshold}")
+        
+        # Group contiguous segments together
+        silence_segments = []
+        if high_silence_segments:
+            current_start = high_silence_segments[0]['start']
+            current_end = high_silence_segments[0]['end']
+            
+            for i in range(1, len(high_silence_segments)):
+                seg = high_silence_segments[i]
+                
+                # If this segment is contiguous with the current group
+                if seg['start'] == current_end:
+                    current_end = seg['end']
+                else:
+                    # End current group and start new one
+                    duration = current_end - current_start
+                    if duration >= min_duration:
+                        confidence = min(1.0, duration / 5.0)
+                        silence_segments.append(SilenceSegment(
+                            start=current_start,
+                            end=current_end,
+                            duration=duration,
+                            confidence=confidence
+                        ))
+                        print(f"Added grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
+                    
+                    current_start = seg['start']
+                    current_end = seg['end']
+            
+            # Add the last group
+            duration = current_end - current_start
+            if duration >= min_duration:
+                confidence = min(1.0, duration / 5.0)
+                silence_segments.append(SilenceSegment(
+                    start=current_start,
+                    end=current_end,
+                    duration=duration,
+                    confidence=confidence
+                ))
+                print(f"Added final grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
+        
+        print(f"Total grouped silence segments found: {len(silence_segments)}")
+        print(f"=== END 5-SECOND SILENCE DETECTION ===")
+        
+        # Clean up uploaded file
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+        
+        return {"silence_segments": silence_segments}
+        
+    except Exception as e:
+        # Clean up on error
+        if "file_path" in locals() and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        
+        raise HTTPException(
+            status_code=500, detail=f"5-second silence detection failed: {str(e)}"
         )
 
 

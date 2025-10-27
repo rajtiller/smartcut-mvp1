@@ -104,17 +104,18 @@ function App() {
   const handleDetectSilenceWithResult = async (transcriptionData: TranscriptionResult) => {
     setIsProcessing(true);
     try {
-      const requestBody = {
-        segments: transcriptionData.segments,
-        min_duration: 1.0
-      };
+      if (!selectedFile) {
+        throw new Error("No file selected");
+      }
       
-      const response = await fetch('http://localhost:8000/detect-silence', {
+      const formData = new FormData();
+      formData.append("file", selectedFile);
+      formData.append("min_duration", "1.0");
+      formData.append("threshold", "0.4");
+      
+      const response = await fetch('http://localhost:8000/detect-silence-5s', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
+        body: formData,
       });
 
       if (!response.ok) {
@@ -352,7 +353,7 @@ function App() {
 
         {/* Step 3: Silence Detection */}
         {currentStep === "silence" && silenceSegments.length > 0 && (
-          <div style={{ width: "100%" }}>
+          <div style={{ width: "100%", maxHeight: "70vh", overflowY: "auto", overflowX: "hidden" }}>
             <h3 style={{ marginBottom: "1rem", textAlign: "center" }}>
               Silence Segments Found ({silenceSegments.length})
             </h3>
@@ -363,6 +364,8 @@ function App() {
                 borderRadius: "8px",
                 maxHeight: "300px",
                 overflowY: "auto",
+                border: "1px solid rgba(255,255,255,0.2)",
+                marginBottom: "1rem"
               }}
             >
               {silenceSegments.map((segment, index) => (
@@ -449,35 +452,6 @@ function App() {
                 </div>
               </div>
             )}
-            
-            <div style={{ textAlign: "center", marginTop: "1rem" }}>
-              <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
-                Selected {selectedCuts.size} segments to cut
-              </p>
-              <button
-                onClick={handleCutVideo}
-                disabled={isProcessing || selectedCuts.size === 0}
-                style={{
-                  backgroundColor:
-                    selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
-                  color:
-                    selectedCuts.size > 0 ? "#8B5CF6" : "rgba(255,255,255,0.6)",
-                  border: "none",
-                  padding: "1rem 2rem",
-                  fontSize: "1rem",
-                  fontWeight: "600",
-                  borderRadius: "8px",
-                  cursor:
-                    selectedCuts.size > 0 && !isProcessing
-                      ? "pointer"
-                      : "not-allowed",
-                }}
-              >
-                {isProcessing
-                  ? "Processing..."
-                  : `Cut ${selectedCuts.size} Segments`}
-              </button>
-            </div>
           </div>
         )}
 
