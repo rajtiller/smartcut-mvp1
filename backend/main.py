@@ -374,7 +374,7 @@ async def detect_silence(request: SilenceDetectionRequest):
 
 
 @app.post("/detect-silence-5s")
-async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 1.0, threshold: float = 0.4):
+async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 1.0, threshold: float = 0.75):
     """Detect silence segments by analyzing each 5-second segment with Whisper"""
     
     if not file.filename:
@@ -459,7 +459,7 @@ async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 
                     transcript_text = getattr(transcript, 'text', '') if hasattr(transcript, 'text') else ''
                     if transcript_text and transcript_text.strip():
                         # If there's text, assume it's speech (no_speech_prob = 0)
-                        no_speech_prob = 0.0
+                        no_speech_prob = 1.0
                         print(f"Segment {i} has text '{transcript_text}', setting no_speech_prob to 0.0")
                     else:
                         # If no text, assume silence (no_speech_prob = 0)
