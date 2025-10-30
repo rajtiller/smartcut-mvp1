@@ -1,10 +1,5 @@
 import { useState } from "react";
 import "./App.css";
-import type { FileInfo, DisplayType } from "./types";
-import { getVideoDuration, generateThumbnail } from "./utils/videoUtils";
-import { DisplayTypeSelector } from "./components/DisplayTypeSelector";
-import { FileList } from "./components/FileList";
-import { TrimPage } from "./pages/TrimPage";
 import { API_URL } from "./config";
 
 interface TranscriptionSegment {
@@ -97,13 +92,8 @@ function App() {
     }
   };
 
-  const handleDetectSilence = async () => {
-    if (!transcriptionResult) return;
-    await handleDetectSilenceWithResult(transcriptionResult);
-  };
-
   const handleDetectSilenceWithResult = async (
-    transcriptionData: TranscriptionResult
+    _transcriptionData: TranscriptionResult
   ) => {
     setIsProcessing(true);
     try {
@@ -236,7 +226,7 @@ function App() {
         }}
       >
         {["upload", "transcribe", "silence", "cut", "download"].map(
-          (step, index) => (
+          (step) => (
             <div
               key={step}
               style={{

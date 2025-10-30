@@ -31,7 +31,7 @@ services:
     startCommand: serve -s dist -l $PORT
     envVars:
       - key: NODE_VERSION
-        value: 18.17.0
+        value: 20.18.0
       - key: PORT
         fromService:
           type: web

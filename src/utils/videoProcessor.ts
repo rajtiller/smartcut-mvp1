@@ -10,11 +10,11 @@ import type { FileInfo } from "../types";
  * @returns Promise that resolves to the processed video file
  */
 export const processSingleVideo = async (
-  fileInfo: FileInfo,
-  startTime: number,
-  endTime: number,
-  outputQuality: "low" | "medium" | "high" = "medium",
-  outputFormat: "mp4" | "webm" | "avi" = "mp4"
+  _fileInfo: FileInfo,
+  _startTime: number,
+  _endTime: number,
+  _outputQuality: "low" | "medium" | "high" = "medium",
+  _outputFormat: "mp4" | "webm" | "avi" = "mp4"
 ): Promise<File> => {
   // TODO: Implement video processing logic
   // Step 1: Validate input parameters
@@ -56,9 +56,9 @@ export const processSingleVideo = async (
  * @returns Promise that resolves to array of processed files
  */
 export const processBatchVideos = async (
-  files: FileInfo[],
-  trimSettings: Array<{ startTime: number; endTime: number }>,
-  globalSettings: {
+  _files: FileInfo[],
+  _trimSettings: Array<{ startTime: number; endTime: number }>,
+  _globalSettings: {
     outputQuality: "low" | "medium" | "high";
     outputFormat: "mp4" | "webm" | "avi";
   }
@@ -92,9 +92,9 @@ export const processBatchVideos = async (
  * @returns Estimated processing time in seconds
  */
 export const estimateProcessingTime = (
-  fileInfo: FileInfo,
+  _fileInfo: FileInfo,
   trimDuration: number,
-  outputQuality: "low" | "medium" | "high"
+  _outputQuality: "low" | "medium" | "high"
 ): number => {
   // TODO: Implement processing time estimation
   // Step 1: Calculate base processing time
