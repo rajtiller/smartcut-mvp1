@@ -5,6 +5,7 @@ import { getVideoDuration, generateThumbnail } from "./utils/videoUtils";
 import { DisplayTypeSelector } from "./components/DisplayTypeSelector";
 import { FileList } from "./components/FileList";
 import { TrimPage } from "./pages/TrimPage";
+import { API_URL } from "./config";
 
 interface TranscriptionSegment {
   id: number;
@@ -52,7 +53,6 @@ function App() {
   const [currentStep, setCurrentStep] = useState<
     "upload" | "transcribe" | "silence" | "cut" | "download"
   >("upload");
-  
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -74,7 +74,7 @@ function App() {
       const formData = new FormData();
       formData.append("file", selectedFile);
 
-      const response = await fetch("http://localhost:8000/upload", {
+      const response = await fetch(`${API_URL}/upload`, {
         method: "POST",
         body: formData,
       });
@@ -85,8 +85,8 @@ function App() {
 
       const result = await response.json();
       setTranscriptionResult(result);
-      setCurrentStep('transcribe');
-      
+      setCurrentStep("transcribe");
+
       // Automatically detect silence using the result directly
       await handleDetectSilenceWithResult(result);
     } catch (error) {
@@ -102,21 +102,23 @@ function App() {
     await handleDetectSilenceWithResult(transcriptionResult);
   };
 
-  const handleDetectSilenceWithResult = async (transcriptionData: TranscriptionResult) => {
+  const handleDetectSilenceWithResult = async (
+    transcriptionData: TranscriptionResult
+  ) => {
     setIsProcessing(true);
     try {
       if (!selectedFile) {
         throw new Error("No file selected");
       }
-      
+
       console.log("Starting silence detection...");
       const formData = new FormData();
       formData.append("file", selectedFile);
       formData.append("min_duration", "1.0");
       formData.append("threshold", "0.4");
-      
-      const response = await fetch('http://localhost:8000/detect-silence-5s', {
-        method: 'POST',
+
+      const response = await fetch(`${API_URL}/detect-silence-5s`, {
+        method: "POST",
         body: formData,
       });
 
@@ -149,7 +151,7 @@ function App() {
       formData.append("file", selectedFile);
       formData.append("cuts", JSON.stringify(cutsToMake));
 
-      const response = await fetch("http://localhost:8000/cut-video", {
+      const response = await fetch(`${API_URL}/cut-video`, {
         method: "POST",
         body: formData,
       });
@@ -193,23 +195,23 @@ function App() {
   };
 
   return (
-      <div
-        style={{
-          backgroundColor: "#4A90E2",
-          minHeight: "100vh",
-          width: "100vw",
-          position: "fixed",
-          top: 0,
-          left: 0,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          justifyContent: "flex-start",
-          padding: "2rem",
-          color: "white",
-          margin: 0,
-          boxSizing: "border-box",
-          overflow: "auto",
+    <div
+      style={{
+        backgroundColor: "#4A90E2",
+        minHeight: "100vh",
+        width: "100vw",
+        position: "fixed",
+        top: 0,
+        left: 0,
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "flex-start",
+        padding: "2rem",
+        color: "white",
+        margin: 0,
+        boxSizing: "border-box",
+        overflow: "auto",
       }}
     >
       <h1
@@ -356,7 +358,14 @@ function App() {
 
         {/* Step 3: Silence Detection */}
         {currentStep === "silence" && silenceSegments.length > 0 && (
-          <div style={{ width: "100%", maxHeight: "70vh", overflowY: "auto", overflowX: "hidden" }}>
+          <div
+            style={{
+              width: "100%",
+              maxHeight: "70vh",
+              overflowY: "auto",
+              overflowX: "hidden",
+            }}
+          >
             <h3 style={{ marginBottom: "1rem", textAlign: "center" }}>
               Silence Segments Found ({silenceSegments.length})
             </h3>
@@ -368,7 +377,7 @@ function App() {
                 maxHeight: "300px",
                 overflowY: "auto",
                 border: "1px solid rgba(255,255,255,0.2)",
-                marginBottom: "1rem"
+                marginBottom: "1rem",
               }}
             >
               {silenceSegments.map((segment, index) => (
@@ -405,9 +414,15 @@ function App() {
                 </div>
               ))}
             </div>
-            
+
             {/* Cut Button */}
-            <div style={{ textAlign: "center", marginTop: "1rem", marginBottom: "1rem" }}>
+            <div
+              style={{
+                textAlign: "center",
+                marginTop: "1rem",
+                marginBottom: "1rem",
+              }}
+            >
               <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
                 Selected {selectedCuts.size} segments to cut
               </p>
@@ -415,14 +430,19 @@ function App() {
                 onClick={handleCutVideo}
                 disabled={isProcessing || selectedCuts.size === 0}
                 style={{
-                  backgroundColor: selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
-                  color: selectedCuts.size > 0 ? "#4A90E2" : "rgba(255,255,255,0.6)",
+                  backgroundColor:
+                    selectedCuts.size > 0 ? "white" : "rgba(255,255,255,0.3)",
+                  color:
+                    selectedCuts.size > 0 ? "#4A90E2" : "rgba(255,255,255,0.6)",
                   border: "none",
                   padding: "1rem 2rem",
                   fontSize: "1rem",
                   fontWeight: "600",
                   borderRadius: "8px",
-                  cursor: selectedCuts.size > 0 && !isProcessing ? "pointer" : "not-allowed",
+                  cursor:
+                    selectedCuts.size > 0 && !isProcessing
+                      ? "pointer"
+                      : "not-allowed",
                   transition: "all 0.2s ease",
                   opacity: isProcessing ? 0.7 : 1,
                 }}
@@ -430,11 +450,17 @@ function App() {
                 {isProcessing ? "Processing..." : "Cut Video"}
               </button>
             </div>
-            
+
             {/* Debug Information - Raw Whisper Output */}
             {transcriptionResult?.debug_info && (
               <div style={{ marginTop: "2rem", width: "100%" }}>
-                <h4 style={{ marginBottom: "1rem", textAlign: "center", color: "#ffd700" }}>
+                <h4
+                  style={{
+                    marginBottom: "1rem",
+                    textAlign: "center",
+                    color: "#ffd700",
+                  }}
+                >
                   🔍 Raw Whisper Output Debug Info
                 </h4>
                 <div
@@ -446,10 +472,12 @@ function App() {
                     overflowY: "auto",
                     fontFamily: "monospace",
                     fontSize: "0.8rem",
-                    border: "1px solid rgba(255,255,255,0.2)"
+                    border: "1px solid rgba(255,255,255,0.2)",
                   }}
                 >
-                  <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                  <pre
+                    style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}
+                  >
                     {JSON.stringify(transcriptionResult.debug_info, null, 2)}
                   </pre>
                 </div>
@@ -468,7 +496,7 @@ function App() {
             <button
               onClick={() =>
                 window.open(
-                  `http://localhost:8000/download/cut_${selectedFile?.name}`,
+                  `${API_URL}/download/cut_${selectedFile?.name}`,
                   "_blank"
                 )
               }
