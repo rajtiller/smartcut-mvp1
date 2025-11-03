@@ -109,19 +109,47 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
             detail=f"Unsupported file type: {file_ext}. Supported formats: {', '.join(sorted(all_supported))}",
         )
 
+    # Define video formats and check if file is video (needed in finally block)
+    video_formats = {".mp4", ".avi", ".mov", ".webm", ".mpeg", ".mkv", ".flv"}
+    is_video = file_ext in video_formats
+    
+    # Initialize variables for cleanup in finally block
+    file_path = None
+    temp_audio_file_created = False
+    audio_file_path = None
+    whisper_file_path = None
+
     try:
         # Save uploaded file
         file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-
-        # Convert file to a format supported by Whisper if needed
+        
+        # For video files, extract audio only to reduce file size for Whisper API
+        # Audio files are much smaller than video files (typically 1-5MB vs 20-50MB+)
         whisper_file_path = file_path
-        temp_file_created = False
 
-        # Check if we need to convert the file
-        if file_ext in [".avi", ".mov"]:
-            # Convert video to mp4 for Whisper using ffmpeg
+        if is_video:
+            # Extract audio from video to reduce file size
+            # Use mp3 format which is well-compressed and supported by Whisper
+            audio_file_path = f"uploads/temp_audio_{os.path.splitext(file.filename)[0]}.mp3"
+            try:
+                print(f"Extracting audio from video: {file_path} -> {audio_file_path}")
+                (
+                    ffmpeg.input(file_path)
+                    .output(audio_file_path, acodec="libmp3lame", audio_bitrate="128k")
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+                whisper_file_path = audio_file_path
+                temp_audio_file_created = True
+                print(f"Audio extraction successful. File size reduced for Whisper API.")
+            except ffmpeg.Error as e:
+                raise HTTPException(
+                    status_code=500, detail=f"Audio extraction failed: {str(e)}"
+                )
+        elif file_ext in [".avi", ".mov"]:
+            # Convert unsupported video formats to mp4 for Whisper
             converted_path = (
                 f"uploads/converted_{os.path.splitext(file.filename)[0]}.mp4"
             )
@@ -133,13 +161,14 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
                     .run(quiet=True)
                 )
                 whisper_file_path = converted_path
-                temp_file_created = True
+                temp_audio_file_created = True
             except ffmpeg.Error as e:
                 raise HTTPException(
                     status_code=500, detail=f"Video conversion failed: {e}"
                 )
 
-        # Transcribe using OpenAI Whisper
+        # Transcribe using OpenAI Whisper (only audio file for videos)
+        print(f"Sending file to Whisper API: {whisper_file_path}")
         with open(whisper_file_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
                 model="whisper-1", file=audio_file, response_format="verbose_json"
@@ -242,16 +271,37 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
         print(f"Transcription error: {str(e)}")  # 添加详细日志
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
-        # Clean up uploaded file and any temporary converted file
-        if "file_path" in locals() and os.path.exists(file_path):
-            os.remove(file_path)
+        # Clean up: Only remove temporary audio files, keep original video file for cutting
+        # The original video file is needed for the /cut-video endpoint
         if (
-            "temp_file_created" in locals()
-            and temp_file_created
-            and "whisper_file_path" in locals()
-            and os.path.exists(whisper_file_path)
+            temp_audio_file_created
+            and audio_file_path
+            and os.path.exists(audio_file_path)
         ):
-            os.remove(whisper_file_path)
+            print(f"Cleaning up temporary audio file: {audio_file_path}")
+            try:
+                os.remove(audio_file_path)
+            except Exception as e:
+                print(f"Warning: Could not remove temporary audio file: {e}")
+        
+        # Also clean up any other temporary converted files (for .avi, .mov conversion)
+        if (
+            temp_audio_file_created
+            and whisper_file_path
+            and file_path
+            and whisper_file_path != file_path
+            and os.path.exists(whisper_file_path)
+            and not (is_video and whisper_file_path == audio_file_path)
+        ):
+            print(f"Cleaning up temporary converted file: {whisper_file_path}")
+            try:
+                os.remove(whisper_file_path)
+            except Exception as e:
+                print(f"Warning: Could not remove temporary file: {e}")
+        
+        # Note: We keep the original file_path (original video/audio file) 
+        # because it may be needed for the /cut-video endpoint
+        # The frontend will handle re-uploading if needed
 
 class SilenceDetectionRequest(BaseModel):
     segments: List[TranscriptionSegment]
