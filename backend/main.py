@@ -1,26 +1,31 @@
 import os
-import tempfile
 import shutil
-from typing import List, Optional
+from typing import List, Optional, Dict
+import ffmpeg
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import openai
-from moviepy.editor import VideoFileClip, AudioFileClip
 import librosa
 import numpy as np
 from dotenv import load_dotenv
 
-# Load environment variables (override system variables)
-load_dotenv(override=True)
+# Load environment variables
+load_dotenv()
 
 app = FastAPI(title="Smart Cut API", version="1.0.0")
 
-# CORS middleware
+# CORS middleware - Allow all origins in production, specific origins in dev
+cors_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://localhost:5173,http://localhost:4173")
+if cors_origins == "*":
+    allow_origins = ["*"]
+else:
+    allow_origins = [origin.strip() for origin in cors_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173", "http://localhost:4173"],
+    allow_origins=allow_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -32,6 +37,7 @@ client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Create directories
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("outputs", exist_ok=True)
+
 
 # Pydantic models
 class TranscriptionSegment(BaseModel):
@@ -46,10 +52,13 @@ class TranscriptionSegment(BaseModel):
     compression_ratio: float
     no_speech_prob: float
 
+
 class TranscriptionResult(BaseModel):
     text: str
     segments: List[TranscriptionSegment]
     language: str
+    debug_info: Optional[Dict[str, str]] = None
+
 
 class SilenceSegment(BaseModel):
     start: float
@@ -57,308 +66,664 @@ class SilenceSegment(BaseModel):
     duration: float
     confidence: float
 
+
 class CutRequest(BaseModel):
     silence_segments: List[SilenceSegment]
+
 
 @app.get("/")
 async def root():
     return {"message": "Smart Cut API is running!"}
 
+
 @app.post("/upload", response_model=TranscriptionResult)
 async def upload_and_transcribe(file: UploadFile = File(...)):
     """Upload audio/video file and transcribe using OpenAI Whisper"""
-    
+
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
-    
-    # Check file type
-    allowed_extensions = {'.mp3', '.mp4', '.wav', '.m4a', '.webm', '.ogg', '.flac', '.avi', '.mov'}
+
+    # Check file type - allow formats supported by OpenAI Whisper plus formats we can convert
+    whisper_supported = {
+        ".flac",
+        ".m4a",
+        ".mp3",
+        ".mp4",
+        ".mpeg",
+        ".mpga",
+        ".oga",
+        ".ogg",
+        ".wav",
+        ".webm",
+    }
+    convertible_formats = {
+        ".avi",
+        ".mov",
+    }  # Formats we can convert to supported formats
+    all_supported = whisper_supported.union(convertible_formats)
     file_ext = os.path.splitext(file.filename)[1].lower()
-    
-    if file_ext not in allowed_extensions:
+
+    if file_ext not in all_supported:
         raise HTTPException(
-            status_code=400, 
-            detail=f"Unsupported file type: {file_ext}. Allowed: {', '.join(allowed_extensions)}"
+            status_code=400,
+            detail=f"Unsupported file type: {file_ext}. Supported formats: {', '.join(sorted(all_supported))}",
         )
-    
+
     try:
         # Save uploaded file
         file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
-        
+
+        # Convert file to a format supported by Whisper if needed
+        whisper_file_path = file_path
+        temp_file_created = False
+
+        # Check if we need to convert the file
+        if file_ext in [".avi", ".mov"]:
+            # Convert video to mp4 for Whisper using ffmpeg
+            converted_path = (
+                f"uploads/converted_{os.path.splitext(file.filename)[0]}.mp4"
+            )
+            try:
+                (
+                    ffmpeg.input(file_path)
+                    .output(converted_path, vcodec="libx264", acodec="aac")
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+                whisper_file_path = converted_path
+                temp_file_created = True
+            except ffmpeg.Error as e:
+                raise HTTPException(
+                    status_code=500, detail=f"Video conversion failed: {e}"
+                )
+
         # Transcribe using OpenAI Whisper
-        with open(file_path, "rb") as audio_file:
+        with open(whisper_file_path, "rb") as audio_file:
             transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json"
+                model="whisper-1", file=audio_file, response_format="verbose_json"
             )
-        
+
+        # Debug: Print transcript structure
+        print(f"=== TRANSCRIPT DEBUG INFO ===")
+        print(f"Transcript type: {type(transcript)}")
+        print(f"Transcript attributes: {dir(transcript)}")
+        print(f"Transcript text: {getattr(transcript, 'text', 'NO TEXT')}")
+        print(f"Transcript language: {getattr(transcript, 'language', 'NO LANGUAGE')}")
+
+        if hasattr(transcript, "segments"):
+            print(f"Segments type: {type(transcript.segments)}")
+            print(
+                f"Number of segments: {len(transcript.segments) if transcript.segments else 0}"
+            )
+            if transcript.segments and len(transcript.segments) > 0:
+                print(f"First segment type: {type(transcript.segments[0])}")
+                print(f"First segment: {transcript.segments[0]}")
+                if hasattr(transcript.segments[0], "__dict__"):
+                    print(
+                        f"First segment attributes: {transcript.segments[0].__dict__}"
+                    )
+                elif isinstance(transcript.segments[0], dict):
+                    print(f"First segment keys: {list(transcript.segments[0].keys())}")
+                    print(f"First segment values: {transcript.segments[0]}")
+        else:
+            print("No segments attribute found")
+        print(f"=== END DEBUG INFO ===")
+
         # Convert to our model format
-        segments = [
-            TranscriptionSegment(
-                id=seg["id"],
-                seek=seg["seek"],
-                start=seg["start"],
-                end=seg["end"],
-                text=seg["text"],
-                tokens=seg["tokens"],
-                temperature=seg["temperature"],
-                avg_logprob=seg["avg_logprob"],
-                compression_ratio=seg["compression_ratio"],
-                no_speech_prob=seg["no_speech_prob"]
-            )
-            for seg in transcript.segments
-        ]
+        segments = []
+        if hasattr(transcript, "segments") and transcript.segments:
+            for seg in transcript.segments:
+                # Handle both dictionary and object formats
+                if isinstance(seg, dict):
+                    # Dictionary format
+                    segments.append(
+                        TranscriptionSegment(
+                            id=seg.get("id", 0),
+                            seek=seg.get("seek", 0.0),
+                            start=seg.get("start", 0.0),
+                            end=seg.get("end", 0.0),
+                            text=seg.get("text", ""),
+                            tokens=seg.get("tokens", []),
+                            temperature=seg.get("temperature", 0.0),
+                            avg_logprob=seg.get("avg_logprob", 0.0),
+                            compression_ratio=seg.get("compression_ratio", 0.0),
+                            no_speech_prob=seg.get("no_speech_prob", 0.0),
+                        )
+                    )
+                else:
+                    # Object format - use getattr
+                    segments.append(TranscriptionSegment(
+                        id=getattr(seg, "id", 0),
+                        seek=getattr(seg, "seek", 0.0),
+                        start=getattr(seg, "start", 0.0),
+                        end=getattr(seg, "end", 0.0),
+                        text=getattr(seg, "text", ""),
+                        tokens=getattr(seg, "tokens", []),
+                        temperature=getattr(seg, "temperature", 0.0),
+                        avg_logprob=getattr(seg, "avg_logprob", 0.0),
+                        compression_ratio=getattr(seg, "compression_ratio", 0.0),
+                        no_speech_prob=getattr(seg, "no_speech_prob", 0.0)
+                    ))
+        
+        # Create debug info for frontend display
+        debug_info = {
+            "raw_transcript": str(transcript),
+            "transcript_text": str(getattr(transcript, 'text', 'NO TEXT')),
+            "transcript_language": str(getattr(transcript, 'language', 'NO LANGUAGE')),
+            "transcript_duration": str(getattr(transcript, 'duration', 'NO DURATION')),
+            "transcript_words": str(getattr(transcript, 'words', 'NO WORDS')),
+            "transcript_segments": str(getattr(transcript, 'segments', 'NO SEGMENTS')),
+            "processed_segments_count": str(len(segments)),
+            "segments_structure": str([str(seg) for seg in segments[:3]] if segments else "No segments")
+        }
         
         result = TranscriptionResult(
-            text=transcript.text,
+            text=getattr(transcript, "text", ""),
             segments=segments,
-            language=transcript.language
+            language=getattr(transcript, 'language', 'unknown'),
+            debug_info=debug_info
         )
-        
+
+        # Print the complete Whisper output for debugging
+        print(f"=== COMPLETE WHISPER OUTPUT ===")
+        print(f"Raw transcript object: {transcript}")
+        print(f"Transcript text: {getattr(transcript, 'text', 'NO TEXT')}")
+        print(f"Transcript language: {getattr(transcript, 'language', 'NO LANGUAGE')}")
+        print(f"Transcript duration: {getattr(transcript, 'duration', 'NO DURATION')}")
+        print(f"Transcript words: {getattr(transcript, 'words', 'NO WORDS')}")
+        print(f"Transcript segments: {getattr(transcript, 'segments', 'NO SEGMENTS')}")
+        print(f"=== END WHISPER OUTPUT ===")
+
         return result
-        
+
     except Exception as e:
-        print(f"Transcription error: {str(e)}")  # Add detailed logging
+        print(f"Transcription error: {str(e)}")  # 添加详细日志
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
-        # Clean up uploaded file
-        if 'file_path' in locals() and os.path.exists(file_path):
+        # Clean up uploaded file and any temporary converted file
+        if "file_path" in locals() and os.path.exists(file_path):
             os.remove(file_path)
+        if (
+            "temp_file_created" in locals()
+            and temp_file_created
+            and "whisper_file_path" in locals()
+            and os.path.exists(whisper_file_path)
+        ):
+            os.remove(whisper_file_path)
+
+class SilenceDetectionRequest(BaseModel):
+    segments: List[TranscriptionSegment]
+    min_duration: float = 1.0
+    total_duration: Optional[float] = None
+
+class SilenceDetectionWithFileRequest(BaseModel):
+    min_duration: float = 1.0
+    threshold: float = 0.4
 
 @app.post("/detect-silence")
-async def detect_silence(
-    file: UploadFile = File(...),
-    threshold: float = Form(0.3),  # 降低阈值，更容易检测到静音
-    min_duration: float = Form(0.5)  # 降低最小时长
-):
-    """Detect silence segments using Whisper's no_speech_prob"""
-    
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
+async def detect_silence(request: SilenceDetectionRequest):
+    """Detect silence segments using 1-second segments with no_speech_prob > 0.6"""
     
     try:
-        # Save uploaded file
-        file_path = f"uploads/{file.filename}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        segments = request.segments
+        min_duration = request.min_duration
         
-        # Transcribe using OpenAI Whisper to get segments with no_speech_prob
-        with open(file_path, "rb") as audio_file:
-            transcript = client.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file,
-                response_format="verbose_json"
-            )
+        if not segments:
+            raise HTTPException(status_code=400, detail="No transcription segments provided")
         
-        # Extract silence segments based on no_speech_prob
+        # Sort segments by start time
+        sorted_segments = sorted(segments, key=lambda x: x.start)
+        
+        print(f"=== SILENCE DETECTION DEBUG ===")
+        print(f"Processing {len(sorted_segments)} transcription segments")
+        print(f"Min duration threshold: {min_duration}s")
+        
+        # Get total duration from the last segment or request
+        total_duration = request.total_duration
+        if not total_duration and sorted_segments:
+            total_duration = sorted_segments[-1].end
+        
+        if not total_duration:
+            raise HTTPException(status_code=400, detail="Total duration not provided")
+        
+        print(f"Total duration: {total_duration}s")
+        
+        # Create 1-second segments and get no_speech_prob for each
+        silence_1s_segments = []
+        
+        # We need the original file path to extract 1s segments
+        # This should be passed in the request or we need to modify the approach
+        # For now, let's assume we have access to the file path
+        # We'll need to modify the request model to include the file path
+        
+        print("Note: This approach requires the original file to extract 1s segments")
+        print("We need to modify the request to include the file path or file content")
+        
+        # For now, let's use the existing segments but extract 1s segments
+        # This is a placeholder - we need the actual file to extract segments
+        for i in range(int(total_duration)):
+            segment_start = float(i)
+            segment_end = float(i + 1)
+            
+            # TODO: Extract 1s segment from original file and send to Whisper
+            # For now, use placeholder logic
+            silence_1s_segments.append({
+                'start': segment_start,
+                'end': segment_end,
+                'no_speech_prob': 0.5  # Placeholder - needs actual Whisper analysis
+            })
+            print(f"1s segment {segment_start}-{segment_end}: no_speech_prob=0.5 (placeholder)")
+        
+        # Filter segments with no_speech_prob < 0.4
+        high_silence_segments = [
+            seg for seg in silence_1s_segments 
+            if seg['no_speech_prob'] < 0.4
+        ]
+        
+        print(f"Found {len(high_silence_segments)} 1s segments with no_speech_prob < 0.4")
+        
+        # Group contiguous segments together
         silence_segments = []
-        
-        print(f"Processing {len(transcript.segments)} segments with threshold={threshold}")
-        
-        # Check if this is a music-only file
-        avg_no_speech_prob = sum(seg["no_speech_prob"] for seg in transcript.segments) / len(transcript.segments)
-        print(f"Average no_speech_prob: {avg_no_speech_prob:.3f}")
-        
-        if avg_no_speech_prob > 0.4:
-            print("⚠️  This appears to be a music-only file (no speech detected)")
-            print("💡 For music files, we'll look for low-energy segments instead")
+        if high_silence_segments:
+            current_start = high_silence_segments[0]['start']
+            current_end = high_silence_segments[0]['end']
             
-            # For music files, create artificial silence segments for demonstration
-            # In a real app, you'd use audio analysis to find quiet parts
-            total_duration = transcript.duration
-            segment_duration = 3.0  # 3-second segments
-            
-            for i in range(int(total_duration / segment_duration)):
-                start_time = i * segment_duration
-                end_time = min((i + 1) * segment_duration, total_duration)
-                duration = end_time - start_time
+            for i in range(1, len(high_silence_segments)):
+                seg = high_silence_segments[i]
                 
-                if duration >= min_duration:
-                    # Simulate finding quiet segments in music
-                    confidence = 0.6 + (i % 3) * 0.1  # Varying confidence
-                    
-                    silence_segments.append(SilenceSegment(
-                        start=start_time,
-                        end=end_time,
-                        duration=duration,
-                        confidence=confidence
-                    ))
-                    print(f"  -> Added simulated quiet segment: {start_time:.1f}s-{end_time:.1f}s (confidence={confidence:.3f})")
-        else:
-            # Original logic for speech-containing files
-            for segment in transcript.segments:
-                no_speech_prob = segment["no_speech_prob"]
-                start_time = segment["start"]
-                end_time = segment["end"]
-                duration = end_time - start_time
-                
-                print(f"Segment: {start_time:.1f}s-{end_time:.1f}s, no_speech_prob={no_speech_prob:.3f}, duration={duration:.1f}s")
-                
-                # If no_speech_prob is above threshold, consider it silence
-                if no_speech_prob > threshold:
+                # If this segment is contiguous with the current group
+                if seg['start'] == current_end:
+                    current_end = seg['end']
+                else:
+                    # End current group and start new one
+                    duration = current_end - current_start
                     if duration >= min_duration:
-                        # Use no_speech_prob as confidence (higher = more confident it's silence)
-                        confidence = no_speech_prob
-                        
+                        confidence = min(1.0, duration / 5.0)
                         silence_segments.append(SilenceSegment(
-                            start=start_time,
-                            end=end_time,
+                            start=current_start,
+                            end=current_end,
                             duration=duration,
                             confidence=confidence
                         ))
-                        print(f"  -> Added silence segment: {start_time:.1f}s-{end_time:.1f}s (confidence={confidence:.3f})")
-                    else:
-                        print(f"  -> Too short ({duration:.1f}s < {min_duration}s)")
-                else:
-                    print(f"  -> Not silence (prob={no_speech_prob:.3f} <= {threshold})")
+                        print(f"Added grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
+                    
+                    current_start = seg['start']
+                    current_end = seg['end']
+            
+            # Add the last group
+            duration = current_end - current_start
+            if duration >= min_duration:
+                confidence = min(1.0, duration / 5.0)
+                silence_segments.append(SilenceSegment(
+                    start=current_start,
+                    end=current_end,
+                    duration=duration,
+                    confidence=confidence
+                ))
+                print(f"Added final grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
         
-        print(f"Total silence segments found: {len(silence_segments)}")
+        print(f"Total grouped silence segments found: {len(silence_segments)}")
+        print(f"=== END SILENCE DETECTION DEBUG ===")
         
-        # Print detailed silence information
-        if silence_segments:
-            print("\n🔇 检测到的静音片段:")
-            for i, segment in enumerate(silence_segments):
-                print(f"  {i+1}. {segment.start:.1f}s - {segment.end:.1f}s (时长: {segment.duration:.1f}s, 置信度: {segment.confidence:.3f})")
-        else:
-            print("\n✅ 未检测到明显的静音片段")
-            print("   可能原因:")
-            print("   - 音频内容连续，没有明显的静音间隔")
-            print("   - 音乐文件，没有语音静音")
-            print("   - 静音片段太短，被过滤掉了")
-        
-        # Clean up uploaded file
-        if os.path.exists(file_path):
-            os.remove(file_path)
-        
-        return {
-            "silence_segments": silence_segments,
-            "whisper_output": {
-                "text": transcript.text,
-                "language": transcript.language,
-                "duration": transcript.duration,
-                "segments": transcript.segments
-            }
-        }
-        
-    except Exception as e:
-        print(f"Silence detection error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Silence detection failed: {str(e)}")
+        return {"silence_segments": silence_segments}
 
-@app.post("/cut-video")
-async def cut_video(
-    file: UploadFile = File(...),
-    cuts: str = Form(...)  # JSON string of cuts to make
-):
-    """Cut video/audio based on silence segments"""
-    
-    import json
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Silence detection failed: {str(e)}"
+        )
+
+
+@app.post("/detect-silence-5s")
+async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 1.0, threshold: float = 0.75):
+    """Detect silence segments by analyzing each 5-second segment with Whisper"""
     
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
     
     try:
-        # Parse cuts
-        cuts_data = json.loads(cuts)
-        
         # Save uploaded file
         file_path = f"uploads/{file.filename}"
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
         
-        # Determine if it's video or audio
-        is_video = file_path.lower().endswith(('.mp4', '.avi', '.mov', '.webm'))
+        # Get total duration
+        try:
+            probe = ffmpeg.probe(file_path)
+            total_duration = float(probe["format"]["duration"])
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Could not get video duration: {e}")
         
-        if is_video:
-            # Process video
-            clip = VideoFileClip(file_path)
-            
-            # Create segments to keep (inverse of cuts)
-            segments_to_keep = []
-            current_time = 0
-            
-            for cut in cuts_data:
-                if current_time < cut["start"]:
-                    segments_to_keep.append((current_time, cut["start"]))
-                current_time = cut["end"]
-            
-            # Add final segment if needed
-            if current_time < clip.duration:
-                segments_to_keep.append((current_time, clip.duration))
-            
-            # Concatenate segments
-            if segments_to_keep:
-                final_clips = [clip.subclip(start, end) for start, end in segments_to_keep]
-                final_video = VideoFileClip.concatenate_videoclips(final_clips)
-            else:
-                final_video = clip
-            
-            # Save output
-            output_path = f"outputs/cut_{file.filename}"
-            final_video.write_videofile(output_path, verbose=False, logger=None)
-            
-            # Clean up
-            clip.close()
-            final_video.close()
-            
-        else:
-            # Process audio
-            clip = AudioFileClip(file_path)
-            
-            # Create segments to keep (inverse of cuts)
-            segments_to_keep = []
-            current_time = 0
-            
-            for cut in cuts_data:
-                if current_time < cut["start"]:
-                    segments_to_keep.append((current_time, cut["start"]))
-                current_time = cut["end"]
-            
-            # Add final segment if needed
-            if current_time < clip.duration:
-                segments_to_keep.append((current_time, clip.duration))
-            
-            # Concatenate segments
-            if segments_to_keep:
-                final_clips = [clip.subclip(start, end) for start, end in segments_to_keep]
-                final_audio = AudioFileClip.concatenate_audioclips(final_clips)
-            else:
-                final_audio = clip
-            
-            # Save output
-            output_path = f"outputs/cut_{file.filename}"
-            final_audio.write_audiofile(output_path, verbose=False, logger=None)
-            
-            # Clean up
-            clip.close()
-            final_audio.close()
+        print(f"=== 5-SECOND SILENCE DETECTION ===")
+        print(f"File: {file.filename}")
+        print(f"Total duration: {total_duration}s")
+        print(f"Threshold: {threshold}")
+        print(f"Min duration: {min_duration}s")
         
-        # Clean up input file
-        if os.path.exists(file_path):
+        silence_5s_segments = []
+        
+        # Analyze each 5-second segment
+        for i in range(0, int(total_duration), 5):
+            segment_start = float(i)
+            segment_end = min(float(i + 5), total_duration)
+            segment_duration = segment_end - segment_start
+            
+            # Extract 5-second segment using ffmpeg
+            temp_segment_path = f"uploads/temp_segment_{i}.wav"
+            try:
+                (
+                    ffmpeg.input(file_path, ss=segment_start, t=segment_duration)
+                    .output(temp_segment_path, acodec="pcm_s16le", ar=16000)
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+                
+                # Analyze with Whisper
+                with open(temp_segment_path, "rb") as audio_file:
+                    transcript = client.audio.transcriptions.create(
+                        model="whisper-1", 
+                        file=audio_file, 
+                        response_format="verbose_json"
+                    )
+                
+                # Get no_speech_prob from the transcript
+                no_speech_prob = 0.5  # Default to neutral
+                
+                # Debug: Print transcript structure
+                print(f"Segment {i} transcript type: {type(transcript)}")
+                print(f"Segment {i} transcript attributes: {dir(transcript)}")
+                
+                # Try to get no_speech_prob from segments
+                if hasattr(transcript, 'segments') and transcript.segments:
+                    print(f"Segment {i} has {len(transcript.segments)} segments")
+                    
+                    # Look for no_speech_prob in any segment
+                    for j, seg in enumerate(transcript.segments):
+                        print(f"Segment {i}, sub-segment {j}: {seg}")
+                        
+                        if hasattr(seg, 'no_speech_prob'):
+                            no_speech_prob = seg.no_speech_prob
+                            print(f"Segment {i} no_speech_prob (attr): {no_speech_prob}")
+                            break
+                        elif isinstance(seg, dict) and 'no_speech_prob' in seg:
+                            no_speech_prob = seg['no_speech_prob']
+                            print(f"Segment {i} no_speech_prob (dict): {no_speech_prob}")
+                            break
+                    
+                    if no_speech_prob == 0.5:
+                        print(f"Segment {i} no no_speech_prob found in any sub-segment")
+                else:
+                    print(f"Segment {i} no segments found in transcript")
+                
+                # Fallback: If no segments or no no_speech_prob, check if there's any text
+                if no_speech_prob == 0.5:
+                    transcript_text = getattr(transcript, 'text', '') if hasattr(transcript, 'text') else ''
+                    if transcript_text and transcript_text.strip():
+                        # If there's text, assume it's speech (no_speech_prob = 0)
+                        no_speech_prob = 1.0
+                        print(f"Segment {i} has text '{transcript_text}', setting no_speech_prob to 0.0")
+                    else:
+                        # If no text, assume silence (no_speech_prob = 0)
+                        no_speech_prob = 0.0
+                        print(f"Segment {i} no text found, setting no_speech_prob to 0.0")
+                
+                silence_5s_segments.append({
+                    'start': segment_start,
+                    'end': segment_end,
+                    'no_speech_prob': no_speech_prob
+                })
+                
+                print(f"5s segment {segment_start}-{segment_end}: no_speech_prob={no_speech_prob}")
+                
+                # Clean up temp file
+                os.remove(temp_segment_path)
+                
+            except Exception as e:
+                print(f"Error processing segment {i}: {e}")
+                # If there's a 500 error or any error, set to 0.5
+                silence_5s_segments.append({
+                    'start': segment_start,
+                    'end': segment_end,
+                    'no_speech_prob': 0.5
+                })
+        
+        # Filter segments with no_speech_prob > threshold
+        high_silence_segments = [
+            seg for seg in silence_5s_segments 
+            if seg['no_speech_prob'] > threshold
+        ]
+        
+        print(f"Found {len(high_silence_segments)} 5s segments with no_speech_prob > {threshold}")
+        
+        # Group contiguous segments together
+        silence_segments = []
+        if high_silence_segments:
+            current_start = high_silence_segments[0]['start']
+            current_end = high_silence_segments[0]['end']
+            
+            for i in range(1, len(high_silence_segments)):
+                seg = high_silence_segments[i]
+                
+                # If this segment is contiguous with the current group
+                if seg['start'] == current_end:
+                    current_end = seg['end']
+                else:
+                    # End current group and start new one
+                    duration = current_end - current_start
+                    if duration >= min_duration:
+                        confidence = min(1.0, duration / 5.0)
+                        silence_segments.append(SilenceSegment(
+                            start=current_start,
+                            end=current_end,
+                            duration=duration,
+                            confidence=confidence
+                        ))
+                        print(f"Added grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
+                    
+                    current_start = seg['start']
+                    current_end = seg['end']
+            
+            # Add the last group
+            duration = current_end - current_start
+            if duration >= min_duration:
+                confidence = min(1.0, duration / 5.0)
+                silence_segments.append(SilenceSegment(
+                    start=current_start,
+                    end=current_end,
+                    duration=duration,
+                    confidence=confidence
+                ))
+                print(f"Added final grouped silence segment: {current_start}s - {current_end}s ({duration}s)")
+        
+        print(f"Total grouped silence segments found: {len(silence_segments)}")
+        print(f"=== END 5-SECOND SILENCE DETECTION ===")
+        
+        # Clean up uploaded file
+        try:
             os.remove(file_path)
+        except Exception:
+            pass
         
-        return {"output_file": output_path, "message": "Video cut successfully"}
+        return {"silence_segments": silence_segments}
         
     except Exception as e:
+        # Clean up on error
+        if "file_path" in locals() and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+        
+        raise HTTPException(
+            status_code=500, detail=f"5-second silence detection failed: {str(e)}"
+        )
+
+
+@app.post("/cut-video")
+async def cut_video(file: UploadFile = File(...), cuts: str = Form(...)):
+    """Cut video/audio based on silence segments"""
+    import json
+    import shutil
+    import os
+    import tempfile
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+
+    try:
+        # Parse cuts
+        cuts_data = json.loads(cuts)
+
+        # Save uploaded file
+        file_path = f"uploads/{file.filename}"
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        # Create segments to keep (inverse of cuts)
+        segments_to_keep = []
+        current_time = 0.0
+
+        # Sort cuts by start time
+        cuts_data.sort(key=lambda x: x["start"])
+
+        for cut in cuts_data:
+            start = float(cut["start"])
+            end = float(cut["end"])
+
+            # Add segment before this cut
+            if current_time < start:
+                segments_to_keep.append({"start": current_time, "end": start})
+
+            # Move current time to end of cut
+            current_time = max(current_time, end)
+
+        # Get total duration and add final segment
+        try:
+            probe = ffmpeg.probe(file_path)
+            duration = float(probe["format"]["duration"])
+
+            if current_time < duration:
+                segments_to_keep.append({"start": current_time, "end": duration})
+        except Exception as e:
+            print(f"Could not get duration: {e}")
+
+        if not segments_to_keep:
+            raise HTTPException(
+                status_code=400, detail="No segments to keep after cuts"
+            )
+
+        # Output path
+        output_filename = f"cut_{file.filename}"
+        output_path = f"outputs/{output_filename}"
+
+        # Ensure output directory exists
+        os.makedirs("outputs", exist_ok=True)
+
+        if len(segments_to_keep) == 1:
+            # Single segment - simple cut
+            segment = segments_to_keep[0]
+            start_time = segment["start"]
+            duration = segment["end"] - segment["start"]
+
+            (
+                ffmpeg.input(file_path, ss=start_time, t=duration)
+                .output(output_path, acodec="copy", vcodec="copy")
+                .overwrite_output()
+                .run(capture_stdout=True, capture_stderr=True)
+            )
+        else:
+            # Multiple segments - need to concatenate
+            temp_dir = tempfile.mkdtemp(prefix="smartcut_")
+            segment_files = []
+
+            try:
+                # Create temporary files for each segment
+                for i, segment in enumerate(segments_to_keep):
+                    start_time = segment["start"]
+                    duration = segment["end"] - segment["start"]
+                    temp_file = os.path.join(temp_dir, f"segment_{i}.mp4")
+
+                    (
+                        ffmpeg.input(file_path, ss=start_time, t=duration)
+                        .output(temp_file, acodec="copy", vcodec="copy")
+                        .overwrite_output()
+                        .run(capture_stdout=True, capture_stderr=True)
+                    )
+                    segment_files.append(temp_file)
+
+                # Create concat file
+                concat_file = os.path.join(temp_dir, "concat.txt")
+                with open(concat_file, "w") as f:
+                    for segment_file in segment_files:
+                        f.write(f"file '{segment_file}'\n")
+
+                # Concatenate segments
+                (
+                    ffmpeg.input(concat_file, format="concat", safe=0)
+                    .output(output_path, acodec="copy", vcodec="copy")
+                    .overwrite_output()
+                    .run(capture_stdout=True, capture_stderr=True)
+                )
+
+            finally:
+                # Clean up temp directory
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception:
+                    pass
+
+        # Clean up input file
+        try:
+            os.remove(file_path)
+        except Exception:
+            pass
+
+        return {
+            "message": "Video cut successfully",
+            "output_file": output_filename,
+            "segments_kept": len(segments_to_keep),
+        }
+
+    except ffmpeg.Error as e:
+        # Clean up on FFmpeg error
+        if "file_path" in locals() and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+
+        stderr_output = e.stderr.decode() if e.stderr else "Unknown FFmpeg error"
+        raise HTTPException(
+            status_code=500, detail=f"Video processing failed: {stderr_output}"
+        )
+
+    except Exception as e:
+        # Clean up on any other error
+        if "file_path" in locals() and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except Exception:
+                pass
+
         raise HTTPException(status_code=500, detail=f"Video cutting failed: {str(e)}")
+
 
 @app.get("/download/{filename}")
 async def download_file(filename: str):
     """Download processed file"""
-    
+
     file_path = f"outputs/{filename}"
-    
+
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
-    
+
     return FileResponse(
-        path=file_path,
-        filename=filename,
-        media_type='application/octet-stream'
+        path=file_path, filename=filename, media_type="application/octet-stream"
     )
+
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

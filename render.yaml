@@ -1,0 +1,42 @@
+services:
+  # Backend API Service
+  - type: web
+    name: smartcut-backend
+    env: python
+    plan: starter # You can upgrade to standard or higher for better performance
+    buildCommand: pip install -r requirements.txt
+    startCommand: cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.0
+      - key: OPENAI_API_KEY
+        sync: false # Set this in Render dashboard
+      - key: PORT
+        fromService:
+          type: web
+          name: smartcut-backend
+          property: port
+      - key: CORS_ORIGINS
+        value: "*" # Allow all origins, or set to your frontend URL
+    healthCheckPath: /
+    # Auto-deploy from main branch
+    autoDeploy: true
+
+  # Frontend Web Service (serves built static files)
+  - type: web
+    name: smartcut-frontend
+    env: node
+    plan: starter
+    buildCommand: npm install && VITE_API_URL=$VITE_API_URL npm run build && npm install -g serve
+    startCommand: serve -s dist -l $PORT
+    envVars:
+      - key: NODE_VERSION
+        value: 20.18.0
+      - key: PORT
+        fromService:
+          type: web
+          name: smartcut-frontend
+          property: port
+      - key: VITE_API_URL
+        sync: false # Set this in Render dashboard after backend deploys (e.g., https://smartcut-backend.onrender.com)
+
