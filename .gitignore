@@ -31,3 +31,8 @@ venv/
 .env.local
 .env.*.local
 !.env.example
+
+# Ignore generated media outputs
+outputs/
+backend/outputs/
+*.mp4
