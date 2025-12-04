@@ -1,9 +1,19 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useMemo } from "react";
 import { Upload, Scissors, Download, ArrowLeft } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
 import type { TranscriptionResult, SilenceSegment, Session } from "../types";
 import { saveSession } from "../services/sessionService";
+
+// --- Types ---
+interface UnifiedSegment {
+  id: string;
+  type: "text" | "silence";
+  start: number;
+  end: number;
+  content: string; // Text for transcript, duration string for silence
+  raw?: any; // Keep reference to original object if needed
+}
 
 // --- Components ---
 
@@ -69,39 +79,18 @@ const UploadModule: React.FC<{
 
 const ProcessModule: React.FC<{
   file: File;
-  transcription: TranscriptionResult;
-  silenceSegments: SilenceSegment[];
-  onDeleteSilence: (index: number) => void; // Toggle selection for deletion
-  cuts: Set<number>;
+  segments: UnifiedSegment[];
+  onToggleCut: (id: string) => void;
+  cuts: Set<string>;
   videoUrl: string | null;
-}> = ({ file, transcription, silenceSegments, onDeleteSilence, cuts, videoUrl }) => {
+}> = ({ file, segments, onToggleCut, cuts, videoUrl }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
-
-  // Combine segments for display
-  // We need to interleave transcription segments and silence segments
-  // This is a simplified merge logic for visualization
-  const combinedItems = React.useMemo(() => {
-    const items: Array<{ type: 'text' | 'silence', start: number, end: number, content: any, index?: number }> = [];
-    
-    // Add text segments
-    transcription.segments.forEach(seg => {
-      items.push({ type: 'text', start: seg.start, end: seg.end, content: seg.text });
-    });
-
-    // Add silence segments
-    silenceSegments.forEach((seg, idx) => {
-      items.push({ type: 'silence', start: seg.start, end: seg.end, content: seg, index: idx });
-    });
-
-    // Sort by start time
-    return items.sort((a, b) => a.start - b.start);
-  }, [transcription, silenceSegments]);
 
   const handleSeek = (time: number) => {
     if (videoRef.current) {
       videoRef.current.currentTime = time;
-      videoRef.current.pause();
+      videoRef.current.pause(); // Pause after seek as requested
     }
   };
 
@@ -153,87 +142,97 @@ const ProcessModule: React.FC<{
         </div>
         
         <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
-          {combinedItems.map((item, idx) => {
-            if (item.type === 'silence') {
-              const isSelected = cuts.has(item.index!);
-              return (
-                <div 
-                  key={`silence-${idx}`}
-                  onClick={() => handleSeek(item.start)}
-                  style={{ 
-                    margin: "1rem 0", 
-                    padding: "0.75rem", 
-                    background: isSelected ? "#fee2e2" : "#f1f5f9", 
-                    borderRadius: "8px",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    border: isSelected ? "1px solid #ef4444" : "1px solid transparent",
-                    transition: "all 0.2s",
-                    cursor: "pointer"
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                    <span style={{ 
-                      fontSize: "0.75rem", 
+          {segments.map((item) => {
+            const isSelected = cuts.has(item.id);
+            const isSilence = item.type === "silence";
+            // Removed active state tracking to simplify UI and avoid multiple highlights
+            // const isActive = currentTime >= item.start && currentTime < item.end;
+
+            return (
+              <div 
+                key={item.id}
+                onClick={() => handleSeek(item.start)}
+                style={{ 
+                  margin: "0.5rem 0", 
+                  padding: "0.75rem", 
+                  background: isSelected 
+                    ? "#fee2e2" // Red background for cut
+                    : isSilence 
+                        ? "#f8fafc" // Light gray for silence
+                        : "transparent", // White/transparent for normal text
+                  borderRadius: "8px",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: "1rem",
+                  border: isSelected 
+                    ? "1px solid #ef4444" 
+                    : "1px solid transparent",
+                  transition: "all 0.2s",
+                  cursor: "pointer"
+                }}
+              >
+                {/* Time & Type Indicator */}
+                <div style={{ 
+                  display: "flex", 
+                  flexDirection: "column", 
+                  alignItems: "flex-start",
+                  minWidth: "80px",
+                  gap: "0.25rem"
+                }}>
+                  <span style={{ 
+                    fontSize: "0.75rem", 
+                    color: "var(--text-secondary)",
+                    fontFamily: "monospace"
+                  }}>
+                    {item.start.toFixed(1)}s
+                  </span>
+                  {isSilence && (
+                     <span style={{ 
+                      fontSize: "0.65rem", 
                       fontWeight: "700", 
                       textTransform: "uppercase", 
-                      letterSpacing: "0.05em",
-                      color: isSelected ? "#ef4444" : "var(--text-secondary)"
+                      color: "#ef4444",
+                      background: "#fee2e2",
+                      padding: "0.1rem 0.3rem",
+                      borderRadius: "4px"
                     }}>
-                      [Silence]
+                      Silence
                     </span>
-                    <span style={{ fontSize: "0.75rem", color: "var(--text-secondary)" }}>
-                      {item.content.duration.toFixed(1)}s
-                    </span>
-                  </div>
-                  
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onDeleteSilence(item.index!);
-                    }}
-                    style={{
-                      background: isSelected ? "#ef4444" : "white",
-                      color: isSelected ? "white" : "var(--text-secondary)",
-                      border: "1px solid var(--border)",
-                      borderRadius: "4px",
-                      padding: "0.25rem 0.75rem",
-                      fontSize: "0.75rem",
-                      fontWeight: "600",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "0.25rem",
-                      transition: "all 0.2s"
-                    }}
-                  >
-                     <Scissors size={14} />
-                     {isSelected ? "Remove" : "Keep"}
-                  </button>
+                  )}
                 </div>
-              );
-            } else {
-              const isActive = currentTime >= item.start && currentTime <= item.end;
-              return (
-                <span
-                  key={`text-${idx}`}
-                  onClick={() => handleSeek(item.start)}
+
+                {/* Content */}
+                <div style={{ flex: 1, fontSize: "1rem", lineHeight: "1.5", color: isSelected ? "#9ca3af" : "var(--text-main)", textDecoration: isSelected ? "line-through" : "none" }}>
+                  {item.content}
+                </div>
+                
+                {/* Action Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleCut(item.id);
+                  }}
                   style={{
+                    background: isSelected ? "#ef4444" : "white",
+                    color: isSelected ? "white" : "var(--text-secondary)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "4px",
+                    padding: "0.4rem 0.8rem",
+                    fontSize: "0.75rem",
+                    fontWeight: "600",
                     cursor: "pointer",
-                    padding: "0.25rem 0",
-                    backgroundColor: isActive ? "#bfdbfe" : "transparent",
-                    transition: "background-color 0.2s",
-                    lineHeight: "1.6",
-                    fontSize: "1rem",
-                    marginRight: "0.25rem",
-                    borderRadius: "2px"
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "0.3rem",
+                    transition: "all 0.2s",
+                    whiteSpace: "nowrap"
                   }}
                 >
-                  {item.content}
-                </span>
-              );
-            }
+                    <Scissors size={14} />
+                    {isSelected ? "Restore" : "Cut"}
+                </button>
+              </div>
+            );
           })}
         </div>
       </div>
@@ -247,24 +246,53 @@ export const SessionPage: React.FC = () => {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [transcription, setTranscription] = useState<TranscriptionResult | null>(null);
   const [silenceSegments, setSilenceSegments] = useState<SilenceSegment[]>([]);
-  const [selectedCuts, setSelectedCuts] = useState<Set<number>>(new Set());
+  const [selectedCuts, setSelectedCuts] = useState<Set<string>>(new Set());
   const [isProcessing, setIsProcessing] = useState(false);
   const [step, setStep] = useState<"upload" | "process" | "download">("upload");
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [sessionId, setSessionId] = useState<string>("");
 
-  // --- Logic from App.tsx ---
-  
+  // Construct unified segments list
+  const allSegments = useMemo<UnifiedSegment[]>(() => {
+    if (!transcription) return [];
+    
+    const items: UnifiedSegment[] = [];
+
+    // Add text segments
+    transcription.segments.forEach((seg, idx) => {
+      items.push({
+        id: `text-${idx}`,
+        type: "text",
+        start: seg.start,
+        end: seg.end,
+        content: seg.text,
+        raw: seg
+      });
+    });
+
+    // Add silence segments
+    silenceSegments.forEach((seg, idx) => {
+      items.push({
+        id: `silence-${idx}`,
+        type: "silence",
+        start: seg.start,
+        end: seg.end,
+        content: `Duration: ${seg.duration.toFixed(1)}s`,
+        raw: seg
+      });
+    });
+
+    return items.sort((a, b) => a.start - b.start);
+  }, [transcription, silenceSegments]);
+
   const handleFileSelect = async (file: File) => {
     setSelectedFile(file);
     setVideoUrl(URL.createObjectURL(file));
     setIsProcessing(true);
 
-    // Create a new session ID
     const newSessionId = Date.now().toString();
     setSessionId(newSessionId);
 
-    // Save initial draft session
     const newSession: Session = {
       id: newSessionId,
       name: file.name,
@@ -274,12 +302,10 @@ export const SessionPage: React.FC = () => {
     };
     saveSession(newSession);
     
-    // Simulate flow: Upload -> Transcribe -> Detect Silence
     try {
       const formData = new FormData();
       formData.append("file", file);
       
-      // 1. Transcribe (includes upload)
       const transResponse = await fetch(`${API_URL}/upload`, {
         method: "POST",
         body: formData,
@@ -288,7 +314,6 @@ export const SessionPage: React.FC = () => {
       const transResult = await transResponse.json();
       setTranscription(transResult);
 
-      // 2. Detect Silence
       const silenceFormData = new FormData();
       silenceFormData.append("file", file);
       silenceFormData.append("min_duration", "1.0");
@@ -302,17 +327,12 @@ export const SessionPage: React.FC = () => {
       const silenceResult = await silenceResponse.json();
       setSilenceSegments(silenceResult.silence_segments);
       
-      // Default: Select all silence for cutting? Or none?
-      // Requirement says "Click [Silence] ... display Delete button".
-      // Let's default to NONE selected, user selects to delete.
-      
       setStep("process");
 
-      // Update session to Processed
       saveSession({
         ...newSession,
         status: "Processed",
-        duration: `${Math.round(silenceResult.silence_segments[silenceResult.silence_segments.length - 1]?.end || 0)}s` // Rough duration
+        duration: `${Math.round(silenceResult.silence_segments[silenceResult.silence_segments.length - 1]?.end || 0)}s`
       });
 
     } catch (error) {
@@ -323,12 +343,12 @@ export const SessionPage: React.FC = () => {
     }
   };
 
-  const toggleSilenceCut = (index: number) => {
+  const toggleCut = (id: string) => {
     const newSet = new Set(selectedCuts);
-    if (newSet.has(index)) {
-      newSet.delete(index);
+    if (newSet.has(id)) {
+      newSet.delete(id);
     } else {
-      newSet.add(index);
+      newSet.add(id);
     }
     setSelectedCuts(newSet);
   };
@@ -337,7 +357,10 @@ export const SessionPage: React.FC = () => {
     if (!selectedFile) return;
     setIsProcessing(true);
     try {
-       const cutsToMake = Array.from(selectedCuts).map(idx => silenceSegments[idx]);
+       // Filter segments to cut based on selected IDs
+       const cutsToMake = allSegments
+         .filter(seg => selectedCuts.has(seg.id))
+         .map(seg => ({ start: seg.start, end: seg.end }));
        
        const formData = new FormData();
        formData.append("file", selectedFile);
@@ -346,22 +369,15 @@ export const SessionPage: React.FC = () => {
        const response = await fetch(`${API_URL}/cut-video`, { method: "POST", body: formData });
        if (!response.ok) throw new Error("Cut failed");
        
-       // Success
        const url = `${API_URL}/download/cut_${selectedFile.name}`;
        setDownloadUrl(url);
        setStep("download");
 
-       // Update session to Completed
        if (sessionId) {
-          // Retrieve current session to keep other fields? Or just overwrite specific ones.
-          // Since we might not have all fields in scope easily, let's construct it.
-          // But better to get the current one from storage or memory. 
-          // Ideally we keep the session object in state, but sessionId is enough if we trust our inputs.
-          // For now, let's just re-save with what we know.
           saveSession({
             id: sessionId,
             name: selectedFile.name,
-            date: new Date().toLocaleString(), // Update date to finish time? Or keep creation? Keep creation usually better but simple is ok.
+            date: new Date().toLocaleString(),
             status: "Completed",
             downloadUrl: url,
             duration: "Processed" 
@@ -378,7 +394,6 @@ export const SessionPage: React.FC = () => {
 
   return (
     <div style={{ maxWidth: "1400px", margin: "0 auto", padding: "2rem", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      {/* Header */}
       <div style={{ display: "flex", alignItems: "center", marginBottom: "2rem", gap: "1rem" }}>
          <button onClick={() => navigate("/")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)" }}>
            <ArrowLeft />
@@ -397,13 +412,12 @@ export const SessionPage: React.FC = () => {
           </div>
         )}
 
-        {step === "process" && selectedFile && transcription && (
+        {step === "process" && selectedFile && (
           <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
              <ProcessModule 
                file={selectedFile}
-               transcription={transcription}
-               silenceSegments={silenceSegments}
-               onDeleteSilence={toggleSilenceCut}
+               segments={allSegments}
+               onToggleCut={toggleCut}
                cuts={selectedCuts}
                videoUrl={videoUrl}
              />
@@ -423,7 +437,7 @@ export const SessionPage: React.FC = () => {
                boxShadow: "0 -4px 6px -1px rgb(0 0 0 / 0.1)"
              }}>
                 <div style={{ marginRight: "auto", color: "var(--text-secondary)" }}>
-                   {selectedCuts.size} cuts selected
+                   {selectedCuts.size} segments selected to cut
                 </div>
                 <button 
                    onClick={() => setStep("upload")}
@@ -458,7 +472,7 @@ export const SessionPage: React.FC = () => {
             </div>
             <h2 style={{ fontSize: "2rem", fontWeight: "700", marginBottom: "1rem" }}>Your video is ready!</h2>
             <p style={{ color: "var(--text-secondary)", marginBottom: "2rem" }}>
-              We've successfully removed {selectedCuts.size} silence segments.
+              We've processed {selectedCuts.size} cuts.
             </p>
             <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
               <button
@@ -506,4 +520,3 @@ export const SessionPage: React.FC = () => {
 };
 
 export default SessionPage;
-
