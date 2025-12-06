@@ -1,12 +1,14 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Clock, FileVideo, ChevronRight, Download } from "lucide-react";
+import { Plus, Clock, FileVideo, ChevronRight, Download, Scissors, Settings } from "lucide-react";
 import { getSessions } from "../services/sessionService";
+import { SettingsPanel } from "../components/SettingsPanel";
 import type { Session } from "../types";
 
 const Dashboard: React.FC = () => {
   const navigate = useNavigate();
   const [history, setHistory] = useState<Session[]>([]);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   useEffect(() => {
     setHistory(getSessions());
@@ -24,43 +26,60 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: "1200px", margin: "0 auto", padding: "2rem" }}>
+    <div className="container" style={{ padding: "2rem" }}>
       {/* Header */}
       <header style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "3rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.75rem" }}>
-          <div style={{ background: "var(--primary)", width: "32px", height: "32px", borderRadius: "8px" }}></div>
-          <span style={{ fontSize: "1.25rem", fontWeight: "700", color: "var(--text-main)" }}>SmartCut</span>
+          <div style={{ 
+            background: "linear-gradient(135deg, var(--primary) 0%, var(--primary-hover) 100%)", 
+            width: "40px", 
+            height: "40px", 
+            borderRadius: "10px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            color: "white"
+          }}>
+            <Scissors size={24} />
+          </div>
+          <span style={{ fontSize: "1.5rem", fontWeight: "700", color: "var(--text-main)", letterSpacing: "-0.03em" }}>SmartCut</span>
         </div>
-        <div style={{ width: "32px", height: "32px", background: "#e2e8f0", borderRadius: "50%" }}></div>
+        <button
+          onClick={() => setIsSettingsOpen(true)}
+          className="btn btn-ghost"
+          style={{ padding: "0.5rem", borderRadius: "50%", width: "40px", height: "40px", display: "flex", alignItems: "center", justifyContent: "center" }}
+          title="Settings"
+        >
+          <Settings size={20} color="var(--text-secondary)" />
+        </button>
       </header>
 
       {/* Hero / Start Action */}
-      <section style={{ marginBottom: "4rem", textAlign: "center", padding: "4rem 2rem", background: "var(--surface)", borderRadius: "var(--radius)", boxShadow: "var(--shadow-md)" }}>
-        <h1 style={{ fontSize: "2.5rem", fontWeight: "800", marginBottom: "1rem", letterSpacing: "-0.025em" }}>
+      <section className="card" style={{ 
+        marginBottom: "4rem", 
+        textAlign: "center", 
+        padding: "5rem 2rem", 
+        background: "var(--surface)", 
+        boxShadow: "var(--shadow-lg)",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center"
+      }}>
+        <h1 style={{ fontSize: "3rem", fontWeight: "800", marginBottom: "1rem", letterSpacing: "-0.03em", background: "linear-gradient(to right, var(--text-main), var(--text-secondary))", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>
           Trim silence, keep the essence.
         </h1>
-        <p style={{ color: "var(--text-secondary)", fontSize: "1.125rem", marginBottom: "2rem", maxWidth: "600px", margin: "0 auto 2rem" }}>
+        <p style={{ color: "var(--text-secondary)", fontSize: "1.25rem", marginBottom: "2.5rem", maxWidth: "600px", lineHeight: "1.6" }}>
           Upload your video or audio, let AI handle the silence, and export a polished cut in seconds.
         </p>
         <button
           onClick={() => navigate("/session/new")}
+          className="btn btn-primary"
           style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: "0.5rem",
-            backgroundColor: "var(--primary)",
-            color: "white",
-            border: "none",
-            padding: "1rem 2rem",
+            padding: "1rem 2.5rem",
             fontSize: "1.125rem",
-            fontWeight: "600",
             borderRadius: "50px",
-            cursor: "pointer",
-            transition: "all 0.2s",
-            boxShadow: "0 4px 12px rgba(37, 99, 235, 0.3)"
+            boxShadow: "0 10px 25px -5px rgba(79, 70, 229, 0.4)"
           }}
-          onMouseOver={(e) => (e.currentTarget.style.transform = "translateY(-2px)")}
-          onMouseOut={(e) => (e.currentTarget.style.transform = "translateY(0)")}
         >
           <Plus size={20} />
           Start New Session
@@ -76,31 +95,41 @@ const Dashboard: React.FC = () => {
         
         <div style={{ display: "grid", gap: "1rem" }}>
           {history.length === 0 ? (
-            <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-secondary)" }}>
-              No recent sessions found. Start a new one!
+            <div style={{ textAlign: "center", padding: "3rem", color: "var(--text-secondary)", background: "var(--surface)", borderRadius: "var(--radius)", border: "1px dashed var(--border)" }}>
+              <p>No recent sessions found.</p>
+              <button 
+                onClick={() => navigate("/session/new")}
+                className="btn btn-ghost"
+                style={{ marginTop: "0.5rem", color: "var(--primary)" }}
+              >
+                Start a new one
+              </button>
             </div>
           ) : (
             history.map((item) => (
               <div
                 key={item.id}
                 onClick={() => handleSessionClick(item)}
+                className="card"
                 style={{
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "space-between",
                   padding: "1.25rem",
-                  background: "var(--surface)",
-                  borderRadius: "var(--radius)",
-                  boxShadow: "var(--shadow-sm)",
-                  border: "1px solid var(--border)",
                   cursor: "pointer",
-                  transition: "border-color 0.2s"
+                  transition: "all 0.2s ease"
                 }}
-                onMouseOver={(e) => (e.currentTarget.style.borderColor = "var(--primary)")}
-                onMouseOut={(e) => (e.currentTarget.style.borderColor = "var(--border)")}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.transform = "translateY(-2px)";
+                  e.currentTarget.style.borderColor = "var(--primary-light)";
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.transform = "translateY(0)";
+                  e.currentTarget.style.borderColor = "var(--border)";
+                }}
               >
                 <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-                  <div style={{ padding: "0.75rem", background: "#f1f5f9", borderRadius: "8px", color: "var(--text-secondary)" }}>
+                  <div style={{ padding: "0.75rem", background: "var(--background)", borderRadius: "12px", color: "var(--primary)" }}>
                     <FileVideo size={24} />
                   </div>
                   <div>
@@ -111,20 +140,17 @@ const Dashboard: React.FC = () => {
                   </div>
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: "1rem" }}>
-                  <span style={{ 
-                    fontSize: "0.75rem", 
-                    fontWeight: "600", 
-                    padding: "0.25rem 0.75rem", 
-                    borderRadius: "20px",
-                    background: item.status === "Completed" ? "#dcfce7" : "#f1f5f9",
-                    color: item.status === "Completed" ? "#166534" : "#475569"
-                  }}>
+                  <span className={`badge ${item.status === "Completed" ? "badge-success" : "badge-neutral"}`}>
                     {item.status}
                   </span>
                   {item.status === "Completed" ? (
-                    <Download size={20} color="var(--primary)" />
+                    <div className="btn btn-ghost" style={{ padding: "0.5rem", borderRadius: "50%" }}>
+                       <Download size={20} color="var(--primary)" />
+                    </div>
                   ) : (
-                    <ChevronRight size={20} color="var(--text-secondary)" />
+                    <div className="btn btn-ghost" style={{ padding: "0.5rem", borderRadius: "50%" }}>
+                      <ChevronRight size={20} color="var(--text-secondary)" />
+                    </div>
                   )}
                 </div>
               </div>
@@ -132,9 +158,11 @@ const Dashboard: React.FC = () => {
           )}
         </div>
       </section>
+
+      {/* Settings Panel */}
+      <SettingsPanel isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 };
 
 export default Dashboard;
-

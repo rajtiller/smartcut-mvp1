@@ -1,9 +1,10 @@
 import React, { useState, useRef, useMemo } from "react";
-import { Upload, Scissors, Download, ArrowLeft } from "lucide-react";
+import { Upload, Scissors, Download, ArrowLeft, RefreshCw } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
 import type { TranscriptionResult, SilenceSegment, Session } from "../types";
 import { saveSession } from "../services/sessionService";
+import { getSettings } from "../services/settingsService";
 
 // --- Types ---
 interface UnifiedSegment {
@@ -45,14 +46,19 @@ const UploadModule: React.FC<{
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
+      className="card"
       style={{
-        border: `2px dashed ${isDragging ? "var(--primary)" : "var(--border)"}`,
-        borderRadius: "var(--radius)",
-        padding: "3rem",
+        padding: "4rem 2rem",
         textAlign: "center",
-        backgroundColor: isDragging ? "#eff6ff" : "var(--surface)",
-        transition: "all 0.2s",
-        cursor: "pointer"
+        backgroundColor: isDragging ? "var(--primary-light)" : "var(--surface)",
+        border: isDragging ? "2px dashed var(--primary)" : "2px dashed var(--border)",
+        cursor: "pointer",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        transition: "all 0.2s ease",
+        minHeight: "400px"
       }}
       onClick={() => document.getElementById("file-input")?.click()}
     >
@@ -64,14 +70,20 @@ const UploadModule: React.FC<{
         accept="video/*,audio/*"
         disabled={isProcessing}
       />
-      <div style={{ marginBottom: "1rem", color: isDragging ? "var(--primary)" : "var(--text-secondary)" }}>
-        <Upload size={48} strokeWidth={1.5} />
+      <div style={{ 
+        marginBottom: "1.5rem", 
+        color: isDragging ? "var(--primary)" : "var(--text-secondary)",
+        background: isDragging ? "white" : "var(--background)",
+        padding: "1.5rem",
+        borderRadius: "50%"
+      }}>
+        {isProcessing ? <RefreshCw className="spin" size={48} /> : <Upload size={48} strokeWidth={1.5} />}
       </div>
-      <h3 style={{ fontSize: "1.125rem", fontWeight: "600", marginBottom: "0.5rem" }}>
-        {isProcessing ? "Processing..." : "Drag & drop your media here"}
+      <h3 style={{ fontSize: "1.25rem", fontWeight: "700", marginBottom: "0.75rem", color: "var(--text-main)" }}>
+        {isProcessing ? "Processing Media..." : "Drag & drop your media here"}
       </h3>
-      <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem" }}>
-        or click to browse files (MP4, MOV, MP3, WAV)
+      <p style={{ color: "var(--text-secondary)", fontSize: "0.95rem", maxWidth: "300px", margin: "0 auto" }}>
+        {isProcessing ? "We're analyzing silence and generating transcripts." : "or click to browse files (MP4, MOV, MP3, WAV)"}
       </p>
     </div>
   );
@@ -95,18 +107,19 @@ const ProcessModule: React.FC<{
   };
 
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2rem", height: "70vh" }}>
+    <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: "2rem", height: "75vh" }}>
       {/* Left: Player (Sticky) */}
       <div style={{ position: "relative", display: "flex", flexDirection: "column", gap: "1rem" }}>
         <div style={{ 
           background: "#000", 
           borderRadius: "var(--radius)", 
           overflow: "hidden", 
-          boxShadow: "var(--shadow-md)",
+          boxShadow: "var(--shadow-lg)",
           aspectRatio: "16/9",
           display: "flex",
           alignItems: "center",
-          justifyContent: "center"
+          justifyContent: "center",
+          position: "relative"
         }}>
            {videoUrl ? (
              <video 
@@ -120,28 +133,32 @@ const ProcessModule: React.FC<{
              <div style={{ color: "white" }}>Loading Preview...</div>
            )}
         </div>
-        <div style={{ padding: "1rem", background: "var(--surface)", borderRadius: "var(--radius)", border: "1px solid var(--border)" }}>
-             <h4 style={{ margin: "0 0 0.5rem 0", fontSize: "1rem" }}>{file.name}</h4>
-             <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem", margin: 0 }}>
-               Current Time: {currentTime.toFixed(2)}s
-             </p>
+        <div className="card" style={{ padding: "1rem 1.5rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+             <div>
+               <h4 style={{ margin: "0 0 0.25rem 0", fontSize: "1rem" }}>{file.name}</h4>
+               <p style={{ color: "var(--text-secondary)", fontSize: "0.875rem", margin: 0 }}>
+                 Current Time: <span style={{ fontFamily: "monospace", fontWeight: 600 }}>{currentTime.toFixed(2)}s</span>
+               </p>
+             </div>
+             <div className="badge badge-neutral">
+               {segments.length} Segments
+             </div>
         </div>
       </div>
 
       {/* Right: Transcript Stream */}
-      <div style={{ 
-        background: "var(--surface)", 
-        borderRadius: "var(--radius)", 
-        border: "1px solid var(--border)",
+      <div className="card" style={{ 
         display: "flex",
         flexDirection: "column",
-        overflow: "hidden"
+        overflow: "hidden",
+        padding: 0,
+        height: "100%"
       }}>
-        <div style={{ padding: "1rem", borderBottom: "1px solid var(--border)", background: "#f8fafc" }}>
-          <h3 style={{ margin: 0, fontSize: "1rem", fontWeight: "600" }}>Transcript & Silence</h3>
+        <div style={{ padding: "1.25rem", borderBottom: "1px solid var(--border)", background: "var(--surface)" }}>
+          <h3 style={{ margin: 0, fontSize: "1.1rem", fontWeight: "700" }}>Transcript & Silence</h3>
         </div>
         
-        <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: "1rem" }}>
           {segments.map((item) => {
             const isSelected = cuts.has(item.id);
             const isSilence = item.type === "silence";
@@ -153,10 +170,10 @@ const ProcessModule: React.FC<{
                 key={item.id}
                 onClick={() => handleSeek(item.start)}
                 style={{ 
-                  margin: "0.5rem 0", 
-                  padding: "0.75rem", 
+                  marginBottom: "0.75rem", 
+                  padding: "1rem", 
                   background: isSelected 
-                    ? "#fee2e2" // Red background for cut
+                    ? "var(--danger-light)" // Red background for cut
                     : isSilence 
                         ? "#f8fafc" // Light gray for silence
                         : "transparent", // White/transparent for normal text
@@ -165,10 +182,17 @@ const ProcessModule: React.FC<{
                   alignItems: "flex-start",
                   gap: "1rem",
                   border: isSelected 
-                    ? "1px solid #ef4444" 
+                    ? "1px solid var(--danger)" 
                     : "1px solid transparent",
                   transition: "all 0.2s",
-                  cursor: "pointer"
+                  cursor: "pointer",
+                  position: "relative"
+                }}
+                onMouseOver={(e) => {
+                  if (!isSelected) e.currentTarget.style.backgroundColor = isSilence ? "#f1f5f9" : "#f8fafc";
+                }}
+                onMouseOut={(e) => {
+                   if (!isSelected) e.currentTarget.style.backgroundColor = isSilence ? "#f8fafc" : "transparent";
                 }}
               >
                 {/* Time & Type Indicator */}
@@ -176,34 +200,70 @@ const ProcessModule: React.FC<{
                   display: "flex", 
                   flexDirection: "column", 
                   alignItems: "flex-start",
-                  minWidth: "80px",
+                  minWidth: "70px",
                   gap: "0.25rem"
                 }}>
                   <span style={{ 
                     fontSize: "0.75rem", 
                     color: "var(--text-secondary)",
-                    fontFamily: "monospace"
+                    fontFamily: "monospace",
+                    background: "var(--background)",
+                    padding: "2px 6px",
+                    borderRadius: "4px"
                   }}>
                     {item.start.toFixed(1)}s
                   </span>
                   {isSilence && (
-                     <span style={{ 
-                      fontSize: "0.65rem", 
-                      fontWeight: "700", 
-                      textTransform: "uppercase", 
-                      color: "#ef4444",
-                      background: "#fee2e2",
-                      padding: "0.1rem 0.3rem",
-                      borderRadius: "4px"
-                    }}>
-                      Silence
-                    </span>
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem", marginTop: "4px" }}>
+                      <span style={{ 
+                        fontSize: "0.65rem", 
+                        fontWeight: "700", 
+                        textTransform: "uppercase", 
+                        color: "var(--danger)",
+                        background: "rgba(239, 68, 68, 0.1)",
+                        padding: "0.1rem 0.4rem",
+                        borderRadius: "4px"
+                      }}>
+                        Silence
+                      </span>
+                      {item.raw?.confidence !== undefined && (
+                        <span style={{
+                          fontSize: "0.6rem",
+                          color: "var(--text-secondary)",
+                          fontFamily: "monospace",
+                          background: "var(--background)",
+                          padding: "0.1rem 0.3rem",
+                          borderRadius: "3px",
+                          textAlign: "center"
+                        }}>
+                          {(item.raw.confidence * 100).toFixed(0)}%
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
 
                 {/* Content */}
-                <div style={{ flex: 1, fontSize: "1rem", lineHeight: "1.5", color: isSelected ? "#9ca3af" : "var(--text-main)", textDecoration: isSelected ? "line-through" : "none" }}>
-                  {item.content}
+                <div style={{ 
+                  flex: 1, 
+                  fontSize: "0.95rem", 
+                  lineHeight: "1.6", 
+                  color: isSelected ? "var(--text-muted)" : "var(--text-main)", 
+                  textDecoration: isSelected ? "line-through" : "none",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "0.25rem"
+                }}>
+                  <span>{item.content}</span>
+                  {isSilence && item.raw?.confidence !== undefined && (
+                    <span style={{
+                      fontSize: "0.75rem",
+                      color: "var(--text-secondary)",
+                      fontStyle: "italic"
+                    }}>
+                      Confidence: <strong style={{ fontFamily: "monospace", color: "var(--text-main)" }}>{(item.raw.confidence * 100).toFixed(0)}%</strong>
+                    </span>
+                  )}
                 </div>
                 
                 {/* Action Button */}
@@ -212,20 +272,12 @@ const ProcessModule: React.FC<{
                     e.stopPropagation();
                     onToggleCut(item.id);
                   }}
+                  className={isSelected ? "btn btn-danger" : "btn btn-secondary"}
                   style={{
-                    background: isSelected ? "#ef4444" : "white",
-                    color: isSelected ? "white" : "var(--text-secondary)",
-                    border: "1px solid var(--border)",
-                    borderRadius: "4px",
                     padding: "0.4rem 0.8rem",
                     fontSize: "0.75rem",
-                    fontWeight: "600",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "0.3rem",
-                    transition: "all 0.2s",
-                    whiteSpace: "nowrap"
+                    whiteSpace: "nowrap",
+                    height: "32px"
                   }}
                 >
                     <Scissors size={14} />
@@ -314,10 +366,13 @@ export const SessionPage: React.FC = () => {
       const transResult = await transResponse.json();
       setTranscription(transResult);
 
+      // Get settings from user preferences
+      const settings = getSettings();
+      
       const silenceFormData = new FormData();
       silenceFormData.append("file", file);
-      silenceFormData.append("min_duration", "1.0");
-      silenceFormData.append("threshold", "0.4");
+      silenceFormData.append("min_duration", settings.minSilenceDuration.toString());
+      silenceFormData.append("threshold", settings.silenceThreshold.toString());
       
       const silenceResponse = await fetch(`${API_URL}/detect-silence-5s`, {
         method: "POST",
@@ -393,127 +448,117 @@ export const SessionPage: React.FC = () => {
   };
 
   return (
-    <div style={{ maxWidth: "1400px", margin: "0 auto", padding: "2rem", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
-      <div style={{ display: "flex", alignItems: "center", marginBottom: "2rem", gap: "1rem" }}>
-         <button onClick={() => navigate("/")} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-secondary)" }}>
-           <ArrowLeft />
-         </button>
-         <h1 style={{ fontSize: "1.5rem", fontWeight: "700", margin: 0 }}>
-           {step === "upload" && "New Session"}
-           {step === "process" && "Editor"}
-           {step === "download" && "Ready to Download"}
-         </h1>
-      </div>
+    <div style={{ padding: "2rem", minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <div className="container" style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        
+        {/* Header Navigation */}
+        <div style={{ display: "flex", alignItems: "center", marginBottom: "2rem", gap: "1rem" }}>
+           <button 
+            onClick={() => navigate("/")} 
+            className="btn btn-ghost"
+            style={{ padding: "0.5rem", borderRadius: "50%", width: "40px", height: "40px" }}
+          >
+             <ArrowLeft size={24} />
+           </button>
+           <div>
+             <h1 style={{ fontSize: "1.5rem", fontWeight: "700", margin: 0 }}>
+               {step === "upload" && "New Session"}
+               {step === "process" && "Editor"}
+               {step === "download" && "Ready to Download"}
+             </h1>
+             <p style={{ margin: "0.25rem 0 0", color: "var(--text-secondary)", fontSize: "0.875rem" }}>
+                {step === "upload" && "Upload your video to get started"}
+                {step === "process" && "Review segments and select cuts"}
+                {step === "download" && "Export your masterpiece"}
+             </p>
+           </div>
+        </div>
 
-      <div style={{ flex: 1 }}>
-        {step === "upload" && (
-          <div style={{ maxWidth: "600px", margin: "4rem auto" }}>
-            <UploadModule onFileSelect={handleFileSelect} isProcessing={isProcessing} />
-          </div>
-        )}
+        <div style={{ flex: 1 }}>
+          {step === "upload" && (
+            <div style={{ maxWidth: "600px", margin: "4rem auto" }}>
+              <UploadModule onFileSelect={handleFileSelect} isProcessing={isProcessing} />
+            </div>
+          )}
 
-        {step === "process" && selectedFile && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
-             <ProcessModule 
-               file={selectedFile}
-               segments={allSegments}
-               onToggleCut={toggleCut}
-               cuts={selectedCuts}
-               videoUrl={videoUrl}
-             />
-             
-             <div style={{ 
-               position: "fixed", 
-               bottom: 0, 
-               left: 0, 
-               right: 0, 
-               background: "var(--surface)", 
-               borderTop: "1px solid var(--border)", 
-               padding: "1rem 2rem",
-               display: "flex",
-               justifyContent: "flex-end",
-               alignItems: "center",
-               gap: "1rem",
-               boxShadow: "0 -4px 6px -1px rgb(0 0 0 / 0.1)"
-             }}>
-                <div style={{ marginRight: "auto", color: "var(--text-secondary)" }}>
-                   {selectedCuts.size} segments selected to cut
-                </div>
-                <button 
-                   onClick={() => setStep("upload")}
-                   style={{ padding: "0.75rem 1.5rem", borderRadius: "8px", border: "1px solid var(--border)", background: "white", cursor: "pointer" }}
+          {step === "process" && selectedFile && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "2rem" }}>
+               <ProcessModule 
+                 file={selectedFile}
+                 segments={allSegments}
+                 onToggleCut={toggleCut}
+                 cuts={selectedCuts}
+                 videoUrl={videoUrl}
+               />
+               
+               <div style={{ 
+                 position: "fixed", 
+                 bottom: 0, 
+                 left: 0, 
+                 right: 0, 
+                 background: "var(--surface)", 
+                 borderTop: "1px solid var(--border)", 
+                 padding: "1rem 2rem",
+                 display: "flex",
+                 justifyContent: "center",
+                 alignItems: "center",
+                 boxShadow: "0 -4px 6px -1px rgb(0 0 0 / 0.1)",
+                 zIndex: 100
+               }}>
+                  <div className="container" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%" }}>
+                    <div style={{ color: "var(--text-secondary)" }}>
+                       <span style={{ fontWeight: 700, color: "var(--text-main)" }}>{selectedCuts.size}</span> segments marked for cutting
+                    </div>
+                    <div style={{ display: "flex", gap: "1rem" }}>
+                      <button 
+                         onClick={() => setStep("upload")}
+                         className="btn btn-secondary"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                         onClick={handleProcessCut}
+                         disabled={isProcessing || selectedCuts.size === 0}
+                         className="btn btn-primary"
+                      >
+                         {isProcessing ? "Processing..." : "Export Cut Video"}
+                      </button>
+                    </div>
+                  </div>
+               </div>
+               <div style={{ height: "80px" }}></div> {/* Spacer for fixed bottom bar */}
+            </div>
+          )}
+
+          {step === "download" && downloadUrl && (
+            <div style={{ textAlign: "center", maxWidth: "500px", margin: "4rem auto" }}>
+              <div style={{ width: "96px", height: "96px", background: "var(--success-light)", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 2rem", color: "var(--success)" }}>
+                <Download size={48} />
+              </div>
+              <h2 style={{ fontSize: "2.5rem", fontWeight: "800", marginBottom: "1rem" }}>Your video is ready!</h2>
+              <p style={{ color: "var(--text-secondary)", marginBottom: "3rem", fontSize: "1.125rem" }}>
+                We've successfully processed your video and removed {selectedCuts.size} segments.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+                <button
+                  onClick={() => window.open(downloadUrl, "_blank")}
+                  className="btn btn-primary"
+                  style={{ padding: "1rem", fontSize: "1.125rem" }}
                 >
-                  Cancel
+                  <Download size={20} />
+                  Download Video
                 </button>
                 <button
-                   onClick={handleProcessCut}
-                   disabled={isProcessing || selectedCuts.size === 0}
-                   style={{ 
-                     padding: "0.75rem 1.5rem", 
-                     borderRadius: "8px", 
-                     background: "var(--primary)", 
-                     color: "white", 
-                     border: "none", 
-                     fontWeight: "600",
-                     cursor: selectedCuts.size === 0 ? "not-allowed" : "pointer",
-                     opacity: selectedCuts.size === 0 ? 0.5 : 1
-                   }}
+                  onClick={() => setStep("upload")}
+                   className="btn btn-ghost"
+                   style={{ padding: "1rem" }}
                 >
-                   {isProcessing ? "Processing..." : "Export Cut Video"}
+                  Start New Session
                 </button>
-             </div>
-          </div>
-        )}
-
-        {step === "download" && downloadUrl && (
-          <div style={{ textAlign: "center", maxWidth: "500px", margin: "4rem auto" }}>
-            <div style={{ width: "80px", height: "80px", background: "#dcfce7", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 1.5rem", color: "#166534" }}>
-              <Download size={40} />
+              </div>
             </div>
-            <h2 style={{ fontSize: "2rem", fontWeight: "700", marginBottom: "1rem" }}>Your video is ready!</h2>
-            <p style={{ color: "var(--text-secondary)", marginBottom: "2rem" }}>
-              We've processed {selectedCuts.size} cuts.
-            </p>
-            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-              <button
-                onClick={() => window.open(downloadUrl, "_blank")}
-                style={{
-                  width: "100%",
-                  padding: "1rem",
-                  borderRadius: "8px",
-                  background: "var(--primary)",
-                  color: "white",
-                  border: "none",
-                  fontWeight: "600",
-                  fontSize: "1.125rem",
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: "0.5rem"
-                }}
-              >
-                <Download size={20} />
-                Download Video
-              </button>
-              <button
-                onClick={() => setStep("upload")}
-                 style={{
-                  width: "100%",
-                  padding: "1rem",
-                  borderRadius: "8px",
-                  background: "transparent",
-                  color: "var(--text-secondary)",
-                  border: "1px solid var(--border)",
-                  fontWeight: "600",
-                  cursor: "pointer"
-                }}
-              >
-                Start New Session
-              </button>
-            </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );
