@@ -162,7 +162,7 @@ If you prefer to deploy manually or the Blueprint doesn't work:
 
 3. **Add Environment Variables**
 
-   - `PYTHON_VERSION`: `3.13.0`
+   - `PYTHON_VERSION`: `3.12.0` (Required for pandas compatibility)
    - `OPENAI_API_KEY`: Your API key (mark as Secret)
 
 4. **Create Service**

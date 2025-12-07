@@ -94,7 +94,7 @@ If you prefer to create services manually:
 
    - `OPENAI_API_KEY`: Your OpenAI API key
    - `CORS_ORIGINS`: `*` or your frontend URL
-   - `PYTHON_VERSION`: `3.13.0`
+   - `PYTHON_VERSION`: `3.12.0` (Required for pandas compatibility)
 
 4. **Advanced Settings**
    - Health Check Path: `/`
