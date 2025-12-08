@@ -495,7 +495,11 @@ async def detect_silence(request: SilenceDetectionRequest):
 
 
 @app.post("/detect-silence-5s")
-async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 1.0, threshold: float = 0.75):
+async def detect_silence_5s(
+    file: UploadFile = File(...), 
+    min_duration: float = Form(1.0), 
+    threshold: float = Form(0.4)
+):
     """Detect silence segments by analyzing each 5-second segment with Whisper"""
     
     if not file.filename:
