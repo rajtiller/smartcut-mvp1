@@ -1,5 +1,6 @@
 import os
 import shutil
+import tempfile
 from typing import List, Optional, Dict
 import ffmpeg
 from fastapi import FastAPI, File, UploadFile, HTTPException, Form
@@ -37,6 +38,40 @@ client = openai.OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 # Create directories
 os.makedirs("uploads", exist_ok=True)
 os.makedirs("outputs", exist_ok=True)
+
+# Configuration
+MAX_FILE_SIZE_GB = 10  # Maximum file size in GB (for safety)
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
+
+def get_disk_free_space(path: str) -> int:
+    """Get free disk space in bytes (cross-platform)"""
+    try:
+        if os.name == 'nt':  # Windows
+            import ctypes
+            free_bytes = ctypes.c_ulonglong(0)
+            ctypes.windll.kernel32.GetDiskFreeSpaceExW(
+                ctypes.c_wchar_p(path),
+                ctypes.pointer(free_bytes),
+                None,
+                None
+            )
+            return free_bytes.value
+        else:  # Unix/Linux/Mac
+            statvfs = os.statvfs(path)
+            return statvfs.f_bavail * statvfs.f_frsize
+    except Exception as e:
+        print(f"Warning: Could not check disk space: {e}")
+        return 0  # Return 0 if we can't check (will fail later if needed)
+
+def check_disk_space(path: str, required_bytes: int) -> bool:
+    """Check if there's enough disk space"""
+    free_space = get_disk_free_space(path)
+    if free_space == 0:
+        return True  # If we can't check, assume OK (will fail later if needed)
+    # Require file size + 50% buffer for safety (temp files, audio extraction, etc.)
+    # This is more reasonable than 2x for large files
+    buffer = max(required_bytes * 0.5, 1024 * 1024 * 1024)  # At least 1GB buffer
+    return free_space > (required_bytes + buffer)
 
 
 # Pydantic models
@@ -118,25 +153,63 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
     temp_audio_file_created = False
     audio_file_path = None
     whisper_file_path = None
+    temp_dir = None
 
     try:
-        # Save uploaded file
-        file_path = f"uploads/{file.filename}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        # For video files, extract audio only to reduce file size for Whisper API
-        # Audio files are much smaller than video files (typically 1-5MB vs 20-50MB+)
-        whisper_file_path = file_path
-
+        # For large video files, we'll extract audio directly without saving the full video
+        # This saves disk space for very large files
         if is_video:
-            # Extract audio from video to reduce file size
-            # Use mp3 format which is well-compressed and supported by Whisper
-            audio_file_path = f"uploads/temp_audio_{os.path.splitext(file.filename)[0]}.mp3"
+            # Create temporary directory for processing
+            temp_dir = tempfile.mkdtemp(prefix="smartcut_upload_")
+            
+            # For video files, extract audio directly from upload stream
+            # This avoids saving the entire large video file to disk
+            audio_file_path = os.path.join(temp_dir, f"extracted_audio.mp3")
+            
+            print(f"Processing large video file: {file.filename}")
+            print(f"Extracting audio directly from upload stream to: {audio_file_path}")
+            
+            # Save to a temporary location first (we need a file for ffmpeg)
+            temp_video_path = os.path.join(temp_dir, f"temp_{file.filename}")
+            
+            # Check file size as we read (streaming check) and save
+            total_size = 0
+            chunk_size = 1024 * 1024  # 1MB chunks
+            with open(temp_video_path, "wb") as buffer:
+                while True:
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    
+                    # Check file size limit
+                    if total_size > MAX_FILE_SIZE_BYTES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_GB}GB. Your file appears to be larger."
+                        )
+                    
+                    # Check disk space periodically (every 100MB)
+                    if total_size % (100 * 1024 * 1024) == 0 or len(chunk) < chunk_size:
+                        # Estimate: need file size + 1GB for audio extraction
+                        estimated_need = total_size + (1024 * 1024 * 1024)  # file + 1GB buffer
+                        if not check_disk_space(temp_dir, estimated_need):
+                            free_gb = get_disk_free_space(temp_dir) / (1024**3)
+                            needed_gb = estimated_need / (1024**3)
+                            raise HTTPException(
+                                status_code=507,  # Insufficient Storage
+                                detail=f"Insufficient disk space. Need at least {needed_gb:.1f}GB free, but only {free_gb:.1f}GB available."
+                            )
+                    
+                    buffer.write(chunk)
+            
+            file_size_mb = total_size / (1024 * 1024)
+            print(f"File size: {file_size_mb:.2f} MB")
+            
+            # Extract audio from video
             try:
-                print(f"Extracting audio from video: {file_path} -> {audio_file_path}")
                 (
-                    ffmpeg.input(file_path)
+                    ffmpeg.input(temp_video_path)
                     .output(audio_file_path, acodec="libmp3lame", audio_bitrate="128k")
                     .overwrite_output()
                     .run(quiet=True)
@@ -144,28 +217,36 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
                 whisper_file_path = audio_file_path
                 temp_audio_file_created = True
                 print(f"Audio extraction successful. File size reduced for Whisper API.")
+                
+                # Remove temporary video file immediately to free space
+                try:
+                    os.remove(temp_video_path)
+                    print(f"Removed temporary video file to free disk space")
+                except Exception as e:
+                    print(f"Warning: Could not remove temp video file: {e}")
+                    
             except ffmpeg.Error as e:
                 raise HTTPException(
                     status_code=500, detail=f"Audio extraction failed: {str(e)}"
                 )
-        elif file_ext in [".avi", ".mov"]:
-            # Convert unsupported video formats to mp4 for Whisper
-            converted_path = (
-                f"uploads/converted_{os.path.splitext(file.filename)[0]}.mp4"
-            )
-            try:
-                (
-                    ffmpeg.input(file_path)
-                    .output(converted_path, vcodec="libx264", acodec="aac")
-                    .overwrite_output()
-                    .run(quiet=True)
-                )
-                whisper_file_path = converted_path
-                temp_audio_file_created = True
-            except ffmpeg.Error as e:
-                raise HTTPException(
-                    status_code=500, detail=f"Video conversion failed: {e}"
-                )
+        else:
+            # For audio files, save normally (they're usually smaller)
+            file_path = f"uploads/{file.filename}"
+            total_size = 0
+            with open(file_path, "wb") as buffer:
+                while True:
+                    chunk = await file.read(1024 * 1024)  # Read 1MB chunks
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    if total_size > MAX_FILE_SIZE_BYTES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_GB}GB."
+                        )
+                    buffer.write(chunk)
+            whisper_file_path = file_path
+        
 
         # Transcribe using OpenAI Whisper (only audio file for videos)
         print(f"Sending file to Whisper API: {whisper_file_path}")
@@ -271,37 +352,25 @@ async def upload_and_transcribe(file: UploadFile = File(...)):
         print(f"Transcription error: {str(e)}")  # 添加详细日志
         raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
     finally:
-        # Clean up: Only remove temporary audio files, keep original video file for cutting
-        # The original video file is needed for the /cut-video endpoint
-        if (
-            temp_audio_file_created
-            and audio_file_path
-            and os.path.exists(audio_file_path)
-        ):
+        # Clean up temporary files and directories
+        if temp_audio_file_created and audio_file_path and os.path.exists(audio_file_path):
             print(f"Cleaning up temporary audio file: {audio_file_path}")
             try:
                 os.remove(audio_file_path)
             except Exception as e:
                 print(f"Warning: Could not remove temporary audio file: {e}")
         
-        # Also clean up any other temporary converted files (for .avi, .mov conversion)
-        if (
-            temp_audio_file_created
-            and whisper_file_path
-            and file_path
-            and whisper_file_path != file_path
-            and os.path.exists(whisper_file_path)
-            and not (is_video and whisper_file_path == audio_file_path)
-        ):
-            print(f"Cleaning up temporary converted file: {whisper_file_path}")
+        # Clean up temporary directory if created
+        if temp_dir and os.path.exists(temp_dir):
+            print(f"Cleaning up temporary directory: {temp_dir}")
             try:
-                os.remove(whisper_file_path)
+                shutil.rmtree(temp_dir)
             except Exception as e:
-                print(f"Warning: Could not remove temporary file: {e}")
+                print(f"Warning: Could not remove temporary directory: {e}")
         
-        # Note: We keep the original file_path (original video/audio file) 
-        # because it may be needed for the /cut-video endpoint
-        # The frontend will handle re-uploading if needed
+        # Note: For large video files, we don't keep the original file
+        # The frontend will need to re-upload for the /cut-video endpoint
+        # This is necessary to avoid disk space issues with very large files
 
 class SilenceDetectionRequest(BaseModel):
     segments: List[TranscriptionSegment]
@@ -432,18 +501,86 @@ async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
     
+    # Initialize variables for cleanup
+    file_path = None
+    temp_audio_file_created = False
+    audio_file_path = None
+    whisper_file_path = None
+    temp_dir = None
+    
     try:
-        # Save uploaded file
-        file_path = f"uploads/{file.filename}"
-        with open(file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        # Check file extension
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        video_formats = {".mp4", ".avi", ".mov", ".webm", ".mpeg", ".mkv", ".flv"}
+        is_video = file_ext in video_formats
         
-        # Get total duration
+        # For large video files, use temporary directory and extract audio immediately
+        if is_video:
+            temp_dir = tempfile.mkdtemp(prefix="smartcut_silence_")
+            temp_video_path = os.path.join(temp_dir, f"temp_{file.filename}")
+            
+            # Save with size check
+            total_size = 0
+            with open(temp_video_path, "wb") as buffer:
+                while True:
+                    chunk = await file.read(1024 * 1024)  # Read 1MB chunks
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    if total_size > MAX_FILE_SIZE_BYTES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_GB}GB."
+                        )
+                    buffer.write(chunk)
+            
+            # Extract audio immediately
+            audio_file_path = os.path.join(temp_dir, f"extracted_audio.mp3")
+            try:
+                print(f"Extracting audio from video for silence detection: {temp_video_path} -> {audio_file_path}")
+                (
+                    ffmpeg.input(temp_video_path)
+                    .output(audio_file_path, acodec="libmp3lame", audio_bitrate="128k")
+                    .overwrite_output()
+                    .run(quiet=True)
+                )
+                whisper_file_path = audio_file_path
+                temp_audio_file_created = True
+                
+                # Remove video file immediately to free space
+                try:
+                    os.remove(temp_video_path)
+                    print(f"Removed temporary video file to free disk space")
+                except Exception as e:
+                    print(f"Warning: Could not remove temp video file: {e}")
+            except ffmpeg.Error as e:
+                raise HTTPException(
+                    status_code=500, detail=f"Audio extraction failed: {str(e)}"
+                )
+        else:
+            # For audio files, save normally
+            file_path = f"uploads/{file.filename}"
+            total_size = 0
+            with open(file_path, "wb") as buffer:
+                while True:
+                    chunk = await file.read(1024 * 1024)  # Read 1MB chunks
+                    if not chunk:
+                        break
+                    total_size += len(chunk)
+                    if total_size > MAX_FILE_SIZE_BYTES:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"File too large. Maximum size is {MAX_FILE_SIZE_GB}GB."
+                        )
+                    buffer.write(chunk)
+            whisper_file_path = file_path
+        
+        # Get total duration from the file we'll use for processing
         try:
-            probe = ffmpeg.probe(file_path)
+            probe = ffmpeg.probe(whisper_file_path)
             total_duration = float(probe["format"]["duration"])
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Could not get video duration: {e}")
+            raise HTTPException(status_code=500, detail=f"Could not get file duration: {e}")
         
         print(f"=== 5-SECOND SILENCE DETECTION ===")
         print(f"File: {file.filename}")
@@ -459,11 +596,11 @@ async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 
             segment_end = min(float(i + 5), total_duration)
             segment_duration = segment_end - segment_start
             
-            # Extract 5-second segment using ffmpeg
+            # Extract 5-second segment using ffmpeg (from audio file if extracted, otherwise original)
             temp_segment_path = f"uploads/temp_segment_{i}.wav"
             try:
                 (
-                    ffmpeg.input(file_path, ss=segment_start, t=segment_duration)
+                    ffmpeg.input(whisper_file_path, ss=segment_start, t=segment_duration)
                     .output(temp_segment_path, acodec="pcm_s16le", ar=16000)
                     .overwrite_output()
                     .run(quiet=True)
@@ -589,25 +726,35 @@ async def detect_silence_5s(file: UploadFile = File(...), min_duration: float = 
         print(f"Total grouped silence segments found: {len(silence_segments)}")
         print(f"=== END 5-SECOND SILENCE DETECTION ===")
         
-        # Clean up uploaded file
-        try:
-            os.remove(file_path)
-        except Exception:
-            pass
-        
         return {"silence_segments": silence_segments}
         
     except Exception as e:
-        # Clean up on error
-        if "file_path" in locals() and os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception:
-                pass
-        
         raise HTTPException(
             status_code=500, detail=f"5-second silence detection failed: {str(e)}"
         )
+    finally:
+        # Clean up temporary audio file if created
+        if (
+            temp_audio_file_created
+            and audio_file_path
+            and os.path.exists(audio_file_path)
+        ):
+            print(f"Cleaning up temporary audio file: {audio_file_path}")
+            try:
+                os.remove(audio_file_path)
+            except Exception as e:
+                print(f"Warning: Could not remove temporary audio file: {e}")
+        
+        # Clean up temporary directory if created
+        if temp_dir and os.path.exists(temp_dir):
+            print(f"Cleaning up temporary directory: {temp_dir}")
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as e:
+                print(f"Warning: Could not remove temporary directory: {e}")
+        
+        # Note: For large video files, we don't keep the original file
+        # The frontend will need to re-upload for the /cut-video endpoint
 
 
 @app.post("/cut-video")
